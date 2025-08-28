@@ -1,0 +1,14 @@
+{
+  "name": "ollama-backend",
+  "version": "1.0.0",
+  "main": "ollama-backend.js",
+  "type": "module",
+  "scripts": {
+    "start": "node ollama-backend.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2"
+  }
+}
