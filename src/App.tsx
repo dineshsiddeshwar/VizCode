@@ -89,9 +89,10 @@ function App() {
   // Handler to save name
   const handleNameSave = () => {
     if (editingNodeId) {
-      setNodes(nodes => {
-        const updated = nodes.map(n => n.id === editingNodeId ? { ...n, name: editingName } : n);
-        setPrompt(regeneratePrompt(updated, edges, clusters));
+      setNodes((nodes: Node[]) => {
+        const updated = nodes.map((n: Node) => n.id === editingNodeId ? { ...n, name: editingName } : n);
+        // use freshest edges/clusters from refs
+        setPrompt(regeneratePrompt(updated, edgesRef.current, clustersRef.current));
         return updated;
       });
       setEditingNodeId(null);
@@ -109,6 +110,19 @@ function App() {
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const [edges, setEdges] = useState<Edge[]>(initialEdges);
   const [clusters, setClusters] = useState<Cluster[]>(initialClusters);
+  // refs to keep latest state for event handlers and async tasks
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+  const clustersRef = useRef(clusters);
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  useEffect(() => { edgesRef.current = edges; }, [edges]);
+  useEffect(() => { clustersRef.current = clusters; }, [clusters]);
+  const updatePromptFromState = (n?: Node[], e?: Edge[], c?: Cluster[]) => {
+    const nn = n ?? nodesRef.current;
+    const ee = e ?? edgesRef.current;
+    const cc = c ?? clustersRef.current;
+    setPrompt(regeneratePrompt(nn, ee, cc));
+  };
   // Prompt / backend sync state
   const [prompt, setPrompt] = useState<string>(initialPrompt);
   const [loading, setLoading] = useState<boolean>(false);
@@ -278,7 +292,7 @@ function App() {
     pt.y = e.clientY;
     const cursorpt = pt.matrixTransform(svg.getScreenCTM()?.inverse());
     const clusterId = findClusterAt(cursorpt.x, cursorpt.y);
-    setNodes(nodes => {
+    setNodes((nodes: Node[]) => {
       const newNodes = [
         ...nodes,
         {
@@ -291,7 +305,8 @@ function App() {
           clusterId: clusterId || undefined // Only assign if inside a cluster
         }
       ];
-      setPrompt(regeneratePrompt(newNodes, edges, clusters));
+      // use latest edges/clusters from refs to regenerate prompt
+      setPrompt(regeneratePrompt(newNodes, edgesRef.current, clustersRef.current));
       return newNodes;
     });
   };
@@ -330,9 +345,10 @@ function App() {
       if (from && to) {
         const id = `e-${edgeCreation.from}-${nodeId}-${Date.now()}`;
         const edgeType = (arrowType === 'single' ? 'solid' : (arrowType === 'double' ? 'double' : (arrowType === 'dotted' ? 'dashed' : 'double-dotted'))) as Edge['type'];
-        setEdges(prev => {
+        setEdges((prev: Edge[]) => {
           const newEdges = [...prev, { id, from: edgeCreation.from!, to: nodeId, label: '', type: edgeType }];
-          setPrompt(regeneratePrompt(nodes, newEdges, clusters));
+          // regenerate prompt using freshest nodes/clusters refs
+          setPrompt(regeneratePrompt(nodesRef.current, newEdges, clustersRef.current));
           return newEdges;
         });
       }
@@ -351,8 +367,16 @@ function App() {
     clickTimers.current[nodeId] = window.setTimeout(() => {
       clickTimers.current[nodeId] = null;
       if (window.confirm('Delete this node and its connected edges?')) {
-        setNodes(nodes => nodes.filter(n => n.id !== nodeId));
-        setEdges(edges => edges.filter(e => e.from !== nodeId && e.to !== nodeId));
+        // compute new nodes and edges and update prompt deterministically
+        setNodes((prevNodes: Node[]) => {
+          const newNodes = prevNodes.filter((n: Node) => n.id !== nodeId);
+          setEdges((prevEdges: Edge[]) => {
+            const newEdges = prevEdges.filter((e: Edge) => e.from !== nodeId && e.to !== nodeId);
+            setPrompt(regeneratePrompt(newNodes, newEdges, clustersRef.current));
+            return newEdges;
+          });
+          return newNodes;
+        });
       }
     }, 300);
   };
@@ -427,9 +451,9 @@ function App() {
         if (from) {
           const id = `e-${edgeCreation.from}-${toNode.id}-${Date.now()}`;
           const edgeType = (arrowType === 'single' ? 'solid' : (arrowType === 'double' ? 'double' : (arrowType === 'dotted' ? 'dashed' : 'double-dotted'))) as Edge['type'];
-          setEdges(prev => {
+          setEdges((prev: Edge[]) => {
             const newEdges = [...prev, { id, from: edgeCreation.from!, to: toNode.id, label: '', type: edgeType }];
-            setPrompt(regeneratePrompt(nodes, newEdges, clusters));
+            setPrompt(regeneratePrompt(nodesRef.current, newEdges, clustersRef.current));
             return newEdges;
           });
         }
@@ -448,8 +472,12 @@ function App() {
     const node = nodes.find(n => n.id === nodeId);
     if (!node) return;
     const cid = findClusterAt(node.x, node.y);
-    setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, clusterId: cid || undefined } : n));
-    setPrompt(regeneratePrompt(nodes, edges, clusters));
+    setNodes((prev: Node[]) => {
+      const updated = prev.map((n: Node) => n.id === nodeId ? { ...n, clusterId: cid || undefined } : n);
+      // update prompt using updated nodes and latest edges/clusters
+      setPrompt(regeneratePrompt(updated, edgesRef.current, clustersRef.current));
+      return updated;
+    });
   };
 
   // Helper to get node by id
@@ -538,12 +566,12 @@ function App() {
     setError(null);
     // Immediately parse locally so the UI updates with user-provided labels while preserving positions
     try {
-      const localImmediate = parsePromptLocally(prompt);
-  const mergedLocal = mergeParsedWithExisting(localImmediate, nodes, clusters);
-  const layoutLocal = layoutClusters(mergedLocal.clusters, mergedLocal.nodes);
-  setNodes(layoutLocal.nodes);
-  setEdges(mergedLocal.edges);
-  setClusters(layoutLocal.clusters);
+  const localImmediate = parsePromptLocally(prompt, nodesRef.current, clustersRef.current);
+      const mergedLocal = mergeParsedWithExisting(localImmediate, nodesRef.current, clustersRef.current);
+      const layoutLocal = layoutClusters(mergedLocal.clusters, mergedLocal.nodes);
+      setNodes(layoutLocal.nodes);
+      setEdges(mergedLocal.edges);
+      setClusters(layoutLocal.clusters);
     } catch {
       // ignore local parse errors and proceed to backend
     }
@@ -563,27 +591,29 @@ function App() {
       // Expecting { nodes: Node[], edges: Edge[], clusters: Cluster[] }
       if (isParseResult(dataUnknown)) {
         const backend = dataUnknown;
-    const mergedBackend = mergeParsedWithExisting(backend, nodes, clusters);
-  // compute layout (non-fixed) and then apply exactly the parsed items to state so prompt is authoritative
-  const layoutBackend = layoutClusters(mergedBackend.clusters, mergedBackend.nodes);
-  // build a final edge set that prefers explicit label fields (and accepts 'lable' typo)
-  const local = parsePromptLocally(prompt);
-  const localMap = new Map(local.edges.map(e => [`${e.from}::${e.to}`, e]));
+        const mergedBackend = mergeParsedWithExisting(backend, nodesRef.current, clustersRef.current);
+        // compute layout (non-fixed) and then apply exactly the parsed items to state so prompt is authoritative
+        const layoutBackend = layoutClusters(mergedBackend.clusters, mergedBackend.nodes);
+         // build a final edge set that prefers explicit label fields (and accepts 'lable' typo)
+  const local = parsePromptLocally(prompt, nodesRef.current, clustersRef.current);
+   const localMap = new Map(local.edges.map(e => [`${e.from}::${e.to}`, e]));
   const mergedEdges: Edge[] = mergedBackend.edges.map((e: Edge) => {
-      const key = `${e.from}::${e.to}`;
-      const localE = localMap.get(key) as Edge | undefined;
-      const edgeObj = e as Edge & { lable?: string };
-      const localObj = (localE as Edge & { lable?: string }) || { label: '', lable: '' };
-      const label = (edgeObj.label && (edgeObj.label as string).trim()) ? edgeObj.label : (edgeObj.lable && (edgeObj.lable as string).trim() ? edgeObj.lable : (localObj.label || localObj.lable || ''));
-      return { ...e, label };
-    });
-  // Apply parsed-and-laid-out results as authoritative
-  setNodes(layoutBackend.nodes);
-  setClusters(layoutBackend.clusters);
-  setEdges(mergedEdges);
+    const key = `${e.from}::${e.to}`;
+    const localE = localMap.get(key) as Edge | undefined;
+    const edgeObj = e as Edge & { lable?: string };
+    const localObj = (localE as Edge & { lable?: string }) || { label: '', lable: '' };
+    const label = (edgeObj.label && (edgeObj.label as string).trim()) ? edgeObj.label : (edgeObj.lable && (edgeObj.lable as string).trim() ? edgeObj.lable : (localObj.label || localObj.lable || ''));
+  // Prefer an explicit type from the local (user) prompt when present; otherwise use backend-provided type (if any)
+  const type = (localE && localE.type) ? (localE.type as Edge['type']) : (e.type as Edge['type'] | undefined);
+  return { ...e, label, type };
+  });
+   // Apply parsed-and-laid-out results as authoritative
+   setNodes(layoutBackend.nodes);
+   setClusters(layoutBackend.clusters);
+   setEdges(mergedEdges);
       } else {
         // fallback to local parse
-        const local = parsePromptLocally(prompt);
+  const local = parsePromptLocally(prompt, nodesRef.current, clustersRef.current);
         setNodes(local.nodes);
         setEdges(local.edges);
         setClusters(local.clusters);
@@ -592,7 +622,7 @@ function App() {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
       // on error, try local parse so user changes appear without backend
-      const local = parsePromptLocally(prompt);
+  const local = parsePromptLocally(prompt, nodesRef.current, clustersRef.current);
       setNodes(local.nodes);
       setEdges(local.edges);
       setClusters(local.clusters);
@@ -606,7 +636,8 @@ function App() {
   //  Cluster: NAME
   //    Node: Label [name=alias]
   //  A -> B [arrow=solid, label=foo]  (accepts 'lable' typo)
-  const parsePromptLocally = (text: string) => {
+  // accepts optional existingNodes and existingClusters to attempt matching by label/name
+  const parsePromptLocally = (text: string, existingNodes?: Node[], existingClusters?: Cluster[]) => {
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
     const outClusters: Cluster[] = [];
     const outNodes: Node[] = [];
@@ -657,7 +688,7 @@ function App() {
         const findId = (label: string) => {
           const key = label.trim();
           // try matching existing current nodes first (case-insensitive)
-          const existing = nodes.find(n => (n.name && n.name.toLowerCase() === key.toLowerCase()) || n.label.toLowerCase() === key.toLowerCase());
+          const existing = (existingNodes || nodes).find(n => (n.name && n.name.toLowerCase() === key.toLowerCase()) || n.label.toLowerCase() === key.toLowerCase());
           if (existing) return existing.id;
           // then match newly created outNodes
           const byName = outNodes.find(n => (n.name && n.name.toLowerCase() === key.toLowerCase()) || n.label.toLowerCase() === key.toLowerCase());
@@ -1095,9 +1126,10 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
                 setClusters(clusters => {
                   const updated = [...clusters, clusterObj];
                   // re-layout clusters to square-ish grid
-                  const layout = layoutClusters(updated, nodes);
-                  setPrompt(regeneratePrompt(layout.nodes, edges, layout.clusters));
-                  setNodes(layout.nodes);
+                  const layout = layoutClusters(updated, nodesRef.current);
+                    // use latest edges from refs when regenerating prompt
+                    setPrompt(regeneratePrompt(layout.nodes, edgesRef.current, layout.clusters));
+                    setNodes(layout.nodes);
                   return layout.clusters;
                 });
                 setNewClusterLabel('');
@@ -1280,8 +1312,11 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
             return (
               <g key={edge.id} onClick={() => {
                 if (window.confirm('Delete this arrow?')) {
-                  setEdges(edges => edges.filter(e => e.id !== edge.id));
-                  setPrompt(regeneratePrompt(nodes, edges.filter(e => e.id !== edge.id), clusters));
+                  setEdges((prev: Edge[]) => {
+                    const newEdges = prev.filter(e => e.id !== edge.id);
+                    setPrompt(regeneratePrompt(nodesRef.current, newEdges, clustersRef.current));
+                    return newEdges;
+                  });
                 }
               }} style={{ cursor: 'pointer' }}>
                     {/* Render routed polyline if needed */}
