@@ -1353,6 +1353,30 @@ const [uploadedIcons, setUploadedIcons] = useState<UploadedIcon[]>([]);
 const [iconSearch, setIconSearch] = useState<string>('');
 const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(uploadedIcons as IconDef[]);
 
+    // Right-click handler: copy icon label to clipboard immediately and show a short toast
+    const [copyMessage, setCopyMessage] = useState<string | null>(null);
+    const handleIconContextMenu = async (e: React.MouseEvent, label: string) => {
+      e.preventDefault();
+      if (!label) return;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(label);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = label;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+        }
+        setCopyMessage(`${label} copied`);
+        setTimeout(() => setCopyMessage(null), 1500);
+      } catch {
+        setCopyMessage('Copy failed');
+        setTimeout(() => setCopyMessage(null), 1500);
+      }
+    };
+
   // Compute tight bounding box for all visible diagram content (nodes + clusters)
   const getDiagramBBox = () => {
     // consider node extents and cluster bboxes
@@ -1620,8 +1644,8 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
           <div style={{ marginTop: 4 }}>
             <div style={{ fontWeight: 700, fontSize: 15, margin: '8px 0 6px 0', color: '#ffa726', letterSpacing: 1 }}>Uploaded</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-      {uploadedIcons.filter(ic => ic.label.toLowerCase().includes(iconSearch.toLowerCase()) || ic.type.toLowerCase().includes(iconSearch.toLowerCase())).map(ic => (
-                <div key={ic.type} draggable onDragStart={e => e.dataTransfer.setData('iconType', ic.type)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'grab', border: '1px solid #444', borderRadius: 8, padding: '6px', background: '#2c313a', width: 54, height: 54, justifyContent: 'center' }} title={`Drag to add ${ic.label}`}>
+  {uploadedIcons.filter(ic => ic.label.toLowerCase().includes(iconSearch.toLowerCase()) || ic.type.toLowerCase().includes(iconSearch.toLowerCase())).map(ic => (
+        <div key={ic.type} draggable onDragStart={e => e.dataTransfer.setData('iconType', ic.type)} onContextMenu={e => handleIconContextMenu(e, ic.label)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'grab', border: '1px solid #444', borderRadius: 8, padding: '6px', background: '#2c313a', width: 54, height: 54, justifyContent: 'center' }} title={`Drag to add ${ic.label}`}>
                   {/* render SVG using <img> with data URL */}
                   <img src={ic.icon} alt={ic.label} style={{ width: 28, height: 28, objectFit: 'contain', display: 'block' }} />
                   <span style={{ fontSize: 11, color: '#ffa726', fontWeight: 500 }}>{ic.label}</span>
@@ -1640,6 +1664,7 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
               key={icon.type}
               draggable
               onDragStart={e => e.dataTransfer.setData('iconType', icon.type)}
+              onContextMenu={e => handleIconContextMenu(e, icon.label)}
               style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'grab',
                     border: '1px solid #444', borderRadius: 8, padding: '6px', background: '#2c313a',
@@ -1666,7 +1691,7 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
             <div style={{ fontWeight: 700, fontSize: 15, margin: '8px 0 6px 0', color: '#ffa726', letterSpacing: 1 }}>Uploaded</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
               {uploadedIcons.map(ic => (
-                <div key={ic.type} draggable onDragStart={e => e.dataTransfer.setData('iconType', ic.type)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'grab', border: '1px solid #444', borderRadius: 8, padding: '6px', background: '#2c313a', width: 54, height: 54, justifyContent: 'center' }} title={`Drag to add ${ic.label}`}>
+                <div key={ic.type} draggable onDragStart={e => e.dataTransfer.setData('iconType', ic.type)} onContextMenu={e => handleIconContextMenu(e, ic.label)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'grab', border: '1px solid #444', borderRadius: 8, padding: '6px', background: '#2c313a', width: 54, height: 54, justifyContent: 'center' }} title={`Drag to add ${ic.label}`}>
                   {/* render SVG using <img> with data URL scaled to match emoji icons */}
                   <img src={ic.icon} alt={ic.label} style={{ width: 28, height: 28, objectFit: 'contain', display: 'block' }} />
                   <span style={{ fontSize: 11, color: '#ffa726', fontWeight: 500 }}>{ic.label}</span>
@@ -2227,6 +2252,13 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
           </div>
       </main>
       </div>
+      {/* Toast for copy feedback */}
+      {copyMessage && (
+        <div style={{ position: 'fixed', right: 20, bottom: 76, background: 'rgba(15,23,42,0.96)', color: '#fff', padding: '8px 12px', borderRadius: 8, boxShadow: '0 6px 20px rgba(2,6,23,0.6)', zIndex: 9999, fontSize: 13 }}>
+          {copyMessage}
+        </div>
+      )}
+
       {/* Footer */}
       <footer style={{ height: 56, background: '#0b1220', color: '#9aa4b2', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px' }}>
         <div style={{ fontSize: 13 }}>© {new Date().getFullYear()} VizCode — Visual diagrams from code</div>
