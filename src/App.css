@@ -97,3 +97,88 @@ body, #root {
 .read-the-docs {
   color: #888;
 }
+
+/* Control rows and button styles (tool theme) */
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  background: #f3f4f6; /* light grey */
+  border: 1px solid #e6e9ef;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.control-row label { color: #374151; font-weight: 600; }
+.control-row input[type="text"], .control-row select {
+  padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff; color: #071026;
+}
+.hidden-file-input { display: none; }
+
+/* Hide scrollbars for a cleaner UI across browsers */
+*::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+html, body { -ms-overflow-style: none; scrollbar-width: none; }
+
+.cluster-input { font-size: 14px; padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff; color: #071026; }
+
+/* Small variant for primary buttons used in compact controls */
+.btn-primary.small {
+  padding: 4px 8px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+
+/* Primary action button (matches Help button look) */
+.btn-primary {
+  background: linear-gradient(90deg,#ffb86b,#ffa726);
+  color: #071026;
+  border: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+}
+.btn-primary:active { transform: translateY(1px); }
+
+.btn-neutral {
+  background: #ffffff; border: 1px solid #d1d5db; color: #071026; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+}
+
+
+/* Control rows and button styles */
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  background: #f3f4f6; /* light grey */
+  border: 1px solid #e6e9ef;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.control-row label { color: #374151; font-weight: 600; }
+.control-row input[type="text"], .control-row select {
+  padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff; color: #071026;
+}
+
+/* Primary action button (matches Help button look)
+   Gradient, prominent, dark label */
+.btn-primary {
+  background: linear-gradient(90deg,#ffb86b,#ffa726);
+  color: #071026;
+  border: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+}
+.btn-primary:active { transform: translateY(1px); }
+
+/* Neutral small buttons */
+.btn-neutral {
+  background: #ffffff; border: 1px solid #d1d5db; color: #071026; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+}
+
+/* Hide native file input appearance; we'll use a label as a styled button */
+.hidden-file-input { display: none; }
+

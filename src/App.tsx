@@ -1595,8 +1595,8 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
     <input value={iconSearch} onChange={e => setIconSearch(e.target.value)} placeholder="Search icons..." style={{ width: '100%', padding: '6px 8px', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#fff' }} />
   </div>
   <div style={{ margin: '6px 0 10px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
-    <label style={{ fontSize: 12, color: '#cbd5e1' }}>Upload SVG:</label>
-    <input type="file" accept="image/svg+xml" onChange={(e) => {
+    <label style={{ fontSize: 13, color: '#cbd5e1' }}>Upload SVG:</label>
+    <input id="upload-svg-input" className="hidden-file-input" type="file" accept="image/svg+xml" onChange={(e) => {
             const f = e.target.files && e.target.files[0];
             if (!f) return;
             const reader = new FileReader();
@@ -1612,8 +1612,9 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
             reader.readAsText(f);
             // reset input so same file can be uploaded again
             (e.target as HTMLInputElement).value = '';
-          }} style={{ fontSize: 12, color: '#cbd5e1' }} />
-        </div>
+          }} />
+    <label htmlFor="upload-svg-input" className="btn-primary small" style={{ cursor: 'pointer' }}>Choose File</label>
+  </div>
   <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
     {uploadedIcons.filter(ic => ic.label.toLowerCase().includes(iconSearch.toLowerCase()) || ic.type.toLowerCase().includes(iconSearch.toLowerCase())).length > 0 && (
           <div style={{ marginTop: 4 }}>
@@ -1681,18 +1682,17 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
       <section className="prompt-editor">
         <h4 style={{ fontSize: 16, margin: '0 0 10px 0', fontWeight: 600 }}>Diagram Prompt</h4>
         {/* Cluster creation UI */}
-        <div style={{ marginBottom: 10, background: '#f5f5f5', padding: '8px 0', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <label style={{ fontWeight: 500, fontSize: 14, marginLeft: 8 }}>Add Cluster:</label>
+        <div className="control-row">
+          <label>Add Cluster:</label>
           <input
+            className="cluster-input"
             type="text"
             value={newClusterLabel}
             onChange={e => setNewClusterLabel(e.target.value)}
             placeholder="Cluster name"
-            style={{ fontSize: 14, padding: '2px 8px', width: 120 }}
+            style={{ width: 140 }}
           />
-          <button
-            style={{ fontSize: 14, padding: '2px 10px' }}
-            onClick={() => {
+          <button className="btn-neutral" onClick={() => {
               if (newClusterLabel.trim()) {
                 const newId = newClusterLabel.trim().toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
                 const pos = findEmptyClusterPosition(180, 100);
@@ -1710,9 +1710,9 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
               }
             }}
           >Add</button>
-          <div style={{ marginLeft: 12 }}>
-            <label style={{ fontSize: 13, marginRight: 6 }}>Import Excel:</label>
-            <input type="file" accept=".xlsx,.xls" onChange={(e) => {
+          <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <label style={{ fontSize: 13 }}>Import Excel:</label>
+            <input id="excel-file-input" className="hidden-file-input" type="file" accept=".xlsx,.xls" onChange={(e) => {
               const inputEl = e.currentTarget as HTMLInputElement;
               const f = inputEl.files && inputEl.files[0];
               if (!f) return;
@@ -1810,19 +1810,18 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
         };
               reader.readAsArrayBuffer(f);
             }} />
+            <label htmlFor="excel-file-input" className="btn-primary small" style={{ cursor: 'pointer' }}>Choose File</label>
           </div>
         </div>
-        <div style={{ marginBottom: 10, background: '#f5f5f5', padding: '8px 0', borderRadius: 6 }}>
-          <label style={{ fontWeight: 500, fontSize: 14, marginRight: 8, marginLeft: 8 }}>Arrow Type:</label>
-          <select value={arrowType} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => handleArrowSelectChange(e.target.value)} style={{ fontSize: 14, padding: '2px 8px' }}>
+        <div className="control-row">
+          <label>Arrow Type:</label>
+          <select value={arrowType} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => handleArrowSelectChange(e.target.value)} style={{ fontSize: 14 }}>
             <option value="single">Single</option>
             <option value="double">Double</option>
             <option value="dotted">Dotted</option>
             <option value="double-dotted">Double Dotted</option>
           </select>
-          <span style={{ fontSize: 13, color: '#888', marginLeft: 12 }}>
-            (Select before creating a new arrow)
-          </span>
+          <span style={{ fontSize: 13, color: '#888', marginLeft: 12 }}>(Select before creating a new arrow)</span>
         </div>
         <div style={{ height: '60vh' }}>
           <Editor
@@ -1842,7 +1841,7 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
           />
         </div>
         <div style={{ marginTop: 8 }}>
-          <button onClick={() => handleParsePrompt()} disabled={loading} style={{ fontSize: 14, padding: '6px 12px' }}>Update Diagram</button>
+          <button onClick={() => handleParsePrompt()} disabled={loading} className="btn-primary">Update Diagram</button>
         </div>
         {error && <div style={{ color: 'red', marginTop: 8 }}>{error}</div>}
       </section>
