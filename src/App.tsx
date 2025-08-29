@@ -151,9 +151,76 @@ function App() {
 
   // Zoom & canvas size state for scrollable/zoomable preview
   const [zoom, setZoom] = useState<number>(1);
-  const canvasSize = { w: 2000, h: 1200 };
+  // Make canvas size dynamic so it can expand when content grows
+  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 4000, h: 2400 });
   const svgWrapperRef = useRef<HTMLDivElement | null>(null);
   const prevLineCountRef = useRef<number>(prompt.split(/\r?\n/).length);
+
+  // Compute bounding box of all content (nodes + clusters)
+  const getContentBBox = () => {
+    const nodeRadius = 36; // from rendering logic
+    const clusterW = 180, clusterH = 100;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of nodesRef.current) {
+      const x = n.x || 0, y = n.y || 0;
+      minX = Math.min(minX, x - nodeRadius);
+      minY = Math.min(minY, y - nodeRadius);
+      maxX = Math.max(maxX, x + nodeRadius);
+      maxY = Math.max(maxY, y + nodeRadius);
+    }
+    for (const c of clustersRef.current) {
+      const x = c.x || 0, y = c.y || 0;
+      minX = Math.min(minX, x - clusterW / 2 - 24);
+      minY = Math.min(minY, y - clusterH / 2 - 24);
+      maxX = Math.max(maxX, x + clusterW / 2 + 24);
+      maxY = Math.max(maxY, y + clusterH / 2 + 24);
+    }
+    if (minX === Infinity) {
+      // no content
+      return { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 };
+    }
+    const width = Math.max(0, maxX - minX);
+    const height = Math.max(0, maxY - minY);
+    return { minX, minY, maxX, maxY, width, height };
+  };
+
+  // Expand canvas if content reaches edges (only expand, don't shrink automatically)
+  useEffect(() => {
+    const padding = 120;
+    const bbox = getContentBBox();
+    if (bbox.width === 0 && bbox.height === 0) return;
+    const neededW = Math.ceil(bbox.maxX + padding);
+    const neededH = Math.ceil(bbox.maxY + padding);
+    setCanvasSize(cs => {
+      const newW = Math.max(cs.w, neededW, 800);
+      const newH = Math.max(cs.h, neededH, 600);
+      if (newW !== cs.w || newH !== cs.h) return { w: newW, h: newH };
+      return cs;
+    });
+  }, [nodes, clusters]);
+
+  // Fit-to-content: compute zoom so content fits inside wrapper and center it
+  const fitToContent = () => {
+    const wrapper = svgWrapperRef.current;
+    if (!wrapper) return;
+    const bbox = getContentBBox();
+    if (bbox.width === 0 && bbox.height === 0) return;
+    const availW = wrapper.clientWidth - 40; // padding
+    const availH = wrapper.clientHeight - 40;
+    if (availW <= 0 || availH <= 0) return;
+    const targetZoom = Math.min(availW / Math.max(1, bbox.width), availH / Math.max(1, bbox.height)) * 0.95;
+    const clamped = Math.max(0.2, Math.min(3, targetZoom));
+    setZoom(clamped);
+    // center by scrolling wrapper to the middle of canvas (approx)
+    // scrollLeft/Top center values depend on canvas pixel size (svg width/height)
+    setTimeout(() => {
+      if (!svgWrapperRef.current) return;
+      const w = canvasSize.w;
+      const h = canvasSize.h;
+      svgWrapperRef.current.scrollLeft = Math.max(0, Math.floor((w - svgWrapperRef.current.clientWidth) / 2));
+      svgWrapperRef.current.scrollTop = Math.max(0, Math.floor((h - svgWrapperRef.current.clientHeight) / 2));
+    }, 50);
+  };
 
   // Set browser tab title
   useEffect(() => {
@@ -1791,6 +1858,7 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
               <div style={{ color: '#ccc', minWidth: 64, textAlign: 'center' }}>{Math.round(zoom * 100)}%</div>
               <button onClick={() => setZoom(z => Math.min(3, +(z + 0.1).toFixed(2)))} style={{ fontSize: 14, padding: '4px 10px' }}>Zoom +</button>
               <button onClick={() => setZoom(1)} style={{ fontSize: 12, padding: '4px 8px' }}>Reset</button>
+              <button onClick={() => fitToContent()} style={{ fontSize: 12, padding: '4px 8px' }}>Fit</button>
             </div>
         </div>
           <div
@@ -1807,7 +1875,8 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
                 });
               }
             }}
-            style={{ width: '100%', overflowX: 'auto', overflowY: 'auto', border: '1px solid #2f363c', borderRadius: 12, height: 600 }}
+            // make the preview area taller so users see more without zooming; 80vh gives plenty of vertical space
+            style={{ width: '100%', overflowX: 'auto', overflowY: 'auto', border: '1px solid #2f363c', borderRadius: 12, height: '80vh' }}
           >
             <svg
               width={canvasSize.w}
