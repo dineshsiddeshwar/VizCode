@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import Editor from '@monaco-editor/react';
 import './App.css';
 
@@ -53,6 +54,29 @@ const initialNodes: Node[] = [
 const initialEdges: Edge[] = [
   { id: 'eg1', from: 'google', to: 'system', label: 'internet', type: 'solid' },
   { id: 'eg2', from: 'storage', to: 'google', label: '', type: 'double-dotted' },
+];
+
+// Base (builtin) icon categories - keep General here. Cloud vendor categories are populated at runtime from manifest
+const baseIconCategories = [
+  {
+    name: 'General',
+    icons: [
+      { type: 'shape-square', label: 'Square', color: '#90a4ae', icon: '◻️' },
+      { type: 'shape-rectangle', label: 'Rectangle', color: '#78909c', icon: '▭' },
+      { type: 'shape-box', label: 'Box', color: '#b0bec5', icon: '▢' },
+      { type: 'shape-circle', label: 'Circle', color: '#81c784', icon: '⚪' },
+      { type: 'user', label: 'User', color: '#e3f2fd', icon: '👤' },
+      { type: 'system', label: 'System', color: '#fffde7', icon: '💻' },
+      { type: 'database', label: 'Database', color: '#e8f5e9', icon: '🗄️' },
+      { type: 'server', label: 'Server', color: '#e0e0e0', icon: '🖥️' },
+      { type: 'network', label: 'Network', color: '#b3e5fc', icon: '🌐' },
+      { type: 'storage', label: 'Storage', color: '#ffe0b2', icon: '💾' },
+      { type: 'queue', label: 'Queue', color: '#f8bbd0', icon: '📬' },
+      { type: 'api', label: 'API', color: '#c8e6c9', icon: '🔗' },
+      { type: 'mobile', label: 'Mobile', color: '#f0f4c3', icon: '📱' },
+      { type: 'web', label: 'Web', color: '#b2dfdb', icon: '🌍' },
+    ]
+  }
 ];
 
 function App() {
@@ -117,12 +141,7 @@ function App() {
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
   useEffect(() => { clustersRef.current = clusters; }, [clusters]);
-  const updatePromptFromState = (n?: Node[], e?: Edge[], c?: Cluster[]) => {
-    const nn = n ?? nodesRef.current;
-    const ee = e ?? edgesRef.current;
-    const cc = c ?? clustersRef.current;
-    setPrompt(regeneratePrompt(nn, ee, cc));
-  };
+  // (updatePromptFromState removed - prompt regeneration is invoked directly where needed)
   // Prompt / backend sync state
   const [prompt, setPrompt] = useState<string>(initialPrompt);
   const [loading, setLoading] = useState<boolean>(false);
@@ -145,11 +164,9 @@ function App() {
     setArrowType(val);
   };
 
-  // Find a reasonably free position for a new/empty cluster by scanning a grid and
-  // avoiding overlap with existing nodes and cluster anchors.
+  // Find a free position for a new node or cluster, avoiding overlap with all nodes and clusters
   const findEmptyClusterPosition = (w: number, h: number) => {
     const margin = 24;
-    // start with reasonable spacing but expand if many clusters exist
     const baseW = Math.max(220, w + 120);
     const baseH = Math.max(160, h + 80);
     const cols = Math.max(2, Math.floor(canvasSize.w / baseW));
@@ -157,6 +174,7 @@ function App() {
     const occupied: { x: number; y: number; w: number; h: number }[] = [];
     for (const n of nodes) occupied.push({ x: n.x - 36, y: n.y - 36, w: 72, h: 72 });
     for (const c of clusters) if (c.x && c.y) occupied.push({ x: c.x - margin, y: c.y - margin, w: 180 + margin * 2, h: 100 + margin * 2 });
+    // Try a grid scan, then spiral out if needed
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const x = 80 + c * baseW;
@@ -166,12 +184,67 @@ function App() {
         for (const occ of occupied) {
           if (!(rect.x + rect.w < occ.x || rect.x > occ.x + occ.w || rect.y + rect.h < occ.y || rect.y > occ.y + occ.h)) { collide = true; break; }
         }
-        if (collide) continue;
-        return { x, y };
+        if (!collide) return { x, y };
       }
+    }
+    // Spiral search if grid is full
+    let angle = 0, radius = 200, tries = 0;
+    while (tries < 200) {
+      const x = canvasSize.w / 2 + Math.cos(angle) * radius;
+      const y = canvasSize.h / 2 + Math.sin(angle) * radius;
+      const rect = { x: x - margin, y: y - margin, w: w + margin * 2, h: h + margin * 2 };
+      let collide = false;
+      for (const occ of occupied) {
+        if (!(rect.x + rect.w < occ.x || rect.x > occ.x + occ.w || rect.y + rect.h < occ.y || rect.y > occ.y + occ.h)) { collide = true; break; }
+      }
+      if (!collide) return { x, y };
+      angle += Math.PI / 6;
+      if (angle > Math.PI * 2) { angle = 0; radius += 40; }
+      tries++;
     }
     // fallback: place near top-left offset by existing cluster count
     return { x: 100 + clusters.length * 20, y: 80 + Math.floor(clusters.length / 6) * 40 };
+  };
+
+  // Try to find a free position near existing nodes inside a cluster so new nodes sit beside others
+  const findPositionNearCluster = (clusterId: string | undefined, w: number, h: number) => {
+    if (!clusterId) return findEmptyClusterPosition(w, h);
+    const members = nodes.filter(n => n.clusterId === clusterId);
+    if (members.length === 0) return findEmptyClusterPosition(w, h);
+    // occupied boxes from all nodes/clusters to avoid
+    const occupied: { x: number; y: number; w: number; h: number }[] = [];
+    for (const n of nodes) occupied.push({ x: n.x - 36, y: n.y - 36, w: 72, h: 72 });
+    for (const c of clusters) if (c.x && c.y) occupied.push({ x: c.x - 24, y: c.y - 24, w: 180 + 48, h: 100 + 48 });
+    // compute centroid of members and scan grid around it (prefer right side)
+    const cx = members.reduce((s, m) => s + m.x, 0) / members.length;
+    const cy = members.reduce((s, m) => s + m.y, 0) / members.length;
+    const step = 64;
+    const maxRadius = 600;
+    for (let r = 0; r <= maxRadius; r += step) {
+      // try positions in a ring (prefer right, bottom, left, top)
+      const candidates = [
+        { x: cx + r + step, y: cy },
+        { x: cx + r + step, y: cy + step },
+        { x: cx + r + step, y: cy - step },
+        { x: cx, y: cy + r + step },
+        { x: cx + step, y: cy + r + step },
+        { x: cx - step, y: cy + r + step },
+        { x: cx - r - step, y: cy },
+        { x: cx - r - step, y: cy + step },
+        { x: cx - r - step, y: cy - step },
+        { x: cx, y: cy - r - step },
+      ];
+      for (const cand of candidates) {
+        const rect = { x: cand.x - 24, y: cand.y - 24, w: w + 48, h: h + 48 };
+        let collide = false;
+        for (const occ of occupied) {
+          if (!(rect.x + rect.w < occ.x || rect.x > occ.x + occ.w || rect.y + rect.h < occ.y || rect.y > occ.y + occ.h)) { collide = true; break; }
+        }
+        if (!collide) return { x: cand.x, y: cand.y };
+      }
+    }
+    // fallback
+    return findEmptyClusterPosition(w, h);
   };
 
   // Helper: find cluster at a given (x, y) point
@@ -199,8 +272,9 @@ function App() {
   };
 
   // Helper: check if a segment intersects any node icon box
-  const segmentIntersectsAnyNode = (x1: number, y1: number, x2: number, y2: number) => {
+  const segmentIntersectsAnyNode = (x1: number, y1: number, x2: number, y2: number, ignoreIds?: string[]) => {
     for (const n of nodes) {
+      if (ignoreIds && ignoreIds.includes(n.id)) continue;
       const left = n.x - 18;
       const right = n.x + 18;
       const top = n.y - 18;
@@ -217,46 +291,226 @@ function App() {
     return false;
   };
 
-  // Smart router: for a given from/to points try straight line first, then L-shape, then S/U-shape
-  const computeRoute = (x1: number, y1: number, x2: number, y2: number) : { points: {x:number;y:number}[], routed: boolean } => {
-    // straight
-    if (!segmentIntersectsAnyNode(x1, y1, x2, y2)) return { points: [{x:x1,y:y1},{x:x2,y:y2}], routed: false };
-    // L-shape (horizontal then vertical)
-    const mid1 = { x: x2, y: y1 };
-    if (!segmentIntersectsAnyNode(x1, y1, mid1.x, mid1.y) && !segmentIntersectsAnyNode(mid1.x, mid1.y, x2, y2)) return { points: [{x:x1,y:y1}, mid1, {x:x2,y:y2}], routed: true };
-    // L-shape (vertical then horizontal)
-    const mid2 = { x: x1, y: y2 };
-    if (!segmentIntersectsAnyNode(x1, y1, mid2.x, mid2.y) && !segmentIntersectsAnyNode(mid2.x, mid2.y, x2, y2)) return { points: [{x:x1,y:y1}, mid2, {x:x2,y:y2}], routed: true };
-    // U/S shape: try offset middle points above/below
-    const offset = 60;
-    const candidates = [
-      [{x:x1,y:y1}, {x:x1,y:y1 - offset}, {x:x2,y:y1 - offset}, {x:x2,y:y2}],
-      [{x:x1,y:y1}, {x:x1,y:y1 + offset}, {x:x2,y:y1 + offset}, {x:x2,y:y2}],
-      [{x:x1,y:y1}, {x:x1 - offset,y:y1}, {x:x1 - offset,y:y2}, {x:x2,y:y2}],
-      [{x:x1,y:y1}, {x:x1 + offset,y:y1}, {x:x1 + offset,y:y2}, {x:x2,y:y2}],
-    ];
-    for (const cand of candidates) {
-      let ok = true;
-      for (let i = 0; i < cand.length - 1; i++) {
-        if (segmentIntersectsAnyNode(cand[i].x, cand[i].y, cand[i+1].x, cand[i+1].y)) { ok = false; break; }
+  // Enhanced smart router: try straight, L, U, S, J, and fallback to curved if needed
+  const computeRoute = (x1: number, y1: number, x2: number, y2: number, ignoreIds?: string[]) : { points: {x:number;y:number}[], routed: boolean } => {
+    // Helper to check all segments in a path
+    const pathIsClear = (pts: {x:number;y:number}[]) => {
+      for (let i = 0; i < pts.length - 1; i++) {
+        if (segmentIntersectsAnyNode(pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y, ignoreIds)) return false;
       }
-      if (ok) return { points: cand, routed: true };
+      return true;
+    };
+    // Try straight
+    if (pathIsClear([{x:x1,y:y1},{x:x2,y:y2}])) return { points: [{x:x1,y:y1},{x:x2,y:y2}], routed: false };
+    // Try L-shapes
+    const mid1 = { x: x2, y: y1 };
+    if (pathIsClear([{x:x1,y:y1}, mid1, {x:x2,y:y2}])) return { points: [{x:x1,y:y1}, mid1, {x:x2,y:y2}], routed: true };
+    const mid2 = { x: x1, y: y2 };
+    if (pathIsClear([{x:x1,y:y1}, mid2, {x:x2,y:y2}])) return { points: [{x:x1,y:y1}, mid2, {x:x2,y:y2}], routed: true };
+    // Try U, S, J shapes with various offsets
+    const offsets = [60, 100, 140, 180];
+    for (const offset of offsets) {
+      const candidates = [
+        // U/S shapes
+        [{x:x1,y:y1}, {x:x1,y:y1 - offset}, {x:x2,y:y1 - offset}, {x:x2,y:y2}],
+        [{x:x1,y:y1}, {x:x1,y:y1 + offset}, {x:x2,y:y1 + offset}, {x:x2,y:y2}],
+        [{x:x1,y:y1}, {x:x1 - offset,y:y1}, {x:x1 - offset,y:y2}, {x:x2,y:y2}],
+        [{x:x1,y:y1}, {x:x1 + offset,y:y1}, {x:x1 + offset,y:y2}, {x:x2,y:y2}],
+        // J shapes
+        [{x:x1,y:y1}, {x:x1 + offset, y:y1}, {x:x1 + offset, y:y2}, {x:x2, y:y2}],
+        [{x:x1,y:y1}, {x:x1 - offset, y:y1}, {x:x1 - offset, y:y2}, {x:x2, y:y2}],
+        [{x:x1,y:y1}, {x:x1, y:y1 + offset}, {x:x2, y:y1 + offset}, {x:x2, y:y2}],
+        [{x:x1,y:y1}, {x:x1, y:y1 - offset}, {x:x2, y:y1 - offset}, {x:x2, y:y2}],
+      ];
+      for (const cand of candidates) {
+        if (pathIsClear(cand)) return { points: cand, routed: true };
+      }
     }
-    // fallback to straight but mark routed=false
+    // Fallback: try a simple quadratic curve (sampled as polyline)
+    const ctrl = { x: (x1 + x2) / 2 + 80, y: (y1 + y2) / 2 - 80 };
+    const curve = [];
+    for (let t = 0; t <= 1.0; t += 0.2) {
+      const x = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * ctrl.x + t * t * x2;
+      const y = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * ctrl.y + t * t * y2;
+      curve.push({ x, y });
+    }
+    if (pathIsClear(curve)) return { points: curve, routed: true };
+    // If all else fails, return straight (may overlap)
     return { points: [{x:x1,y:y1},{x:x2,y:y2}], routed: false };
+  };
+
+  // Return candidate attachment points around a node (edges and corners)
+  const getAttachmentPoints = (n: Node) => {
+    const r = 18; // half icon
+    const pts = [
+      { x: n.x - r, y: n.y, side: 'left' },
+      { x: n.x + r, y: n.y, side: 'right' },
+      { x: n.x, y: n.y - r, side: 'top' },
+      { x: n.x, y: n.y + r, side: 'bottom' },
+      { x: n.x - r, y: n.y - r, side: 'tl' },
+      { x: n.x + r, y: n.y - r, side: 'tr' },
+      { x: n.x - r, y: n.y + r, side: 'bl' },
+      { x: n.x + r, y: n.y + r, side: 'br' },
+    ];
+    return pts;
+  };
+
+  // High-level router: try attachment points on both nodes and pick the shortest clear route
+  const computeRouteForNodes = (from: Node, to: Node) : { points: {x:number;y:number}[], routed: boolean } => {
+    const fromPts = getAttachmentPoints(from);
+    const toPts = getAttachmentPoints(to);
+    let best: { points: {x:number;y:number}[], routed: boolean } | null = null;
+    let bestLen = Infinity;
+  // (duplicate quick A* removed) rely on the robust orthogonal A* implementation below
+
+    // Because the quick in-place A* above didn't keep parents persistently, implement a reliable A* with parent map now
+    const orthogonalAStar = (start: {x:number;y:number}, end: {x:number;y:number}) => {
+      const cell = 20;
+      const margin = 80;
+      const minX = Math.max(0, Math.floor((Math.min(start.x, end.x) - margin) / cell));
+      const minY = Math.max(0, Math.floor((Math.min(start.y, end.y) - margin) / cell));
+      const maxX = Math.ceil((Math.max(start.x, end.x) + margin) / cell);
+      const maxY = Math.ceil((Math.max(start.y, end.y) + margin) / cell);
+      const w = maxX - minX + 1;
+      const h = maxY - minY + 1;
+      const occ = new Array(h).fill(0).map(() => new Array(w).fill(false));
+      const pad = 10;
+      for (const n of nodes) {
+        const left = Math.floor((n.x - 18 - pad) / cell) - minX;
+        const right = Math.floor((n.x + 18 + pad) / cell) - minX;
+        const top = Math.floor((n.y - 18 - pad) / cell) - minY;
+        const bottom = Math.floor((n.y + 18 + pad) / cell) - minY;
+        for (let yy = Math.max(0, top); yy <= Math.min(h - 1, bottom); yy++) {
+          for (let xx = Math.max(0, left); xx <= Math.min(w - 1, right); xx++) {
+            occ[yy][xx] = true;
+          }
+        }
+      }
+      const toGrid = (p: {x:number;y:number}) => ({ gx: Math.max(0, Math.min(w-1, Math.round(p.x / cell) - minX)), gy: Math.max(0, Math.min(h-1, Math.round(p.y / cell) - minY)) });
+      const fromG = toGrid(start);
+      const toG = toGrid(end);
+      occ[fromG.gy][fromG.gx] = false; occ[toG.gy][toG.gx] = false;
+      type Cell = { x: number; y: number };
+      const key = (c: Cell) => `${c.x},${c.y}`;
+      const dirs: Cell[] = [ {x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1} ];
+      const openHeap: {k:string;cost:number;prio:number}[] = [];
+      const parents = new Map<string,string>();
+      const gscore = new Map<string,number>();
+      const pushHeap = (k:string, cost:number, prio:number) => { openHeap.push({k,cost,prio}); gscore.set(k,cost); };
+      const popHeap = () => {
+        if (openHeap.length === 0) return undefined;
+        let bestI = 0; for (let i = 1; i < openHeap.length; i++) if (openHeap[i].prio < openHeap[bestI].prio) bestI = i;
+        const item = openHeap.splice(bestI,1)[0]; return item;
+      };
+      const startKey = key({ x: fromG.gx, y: fromG.gy });
+      const goalKey = key({ x: toG.gx, y: toG.gy });
+      pushHeap(startKey, 0, Math.abs(fromG.gx - toG.gx) + Math.abs(fromG.gy - toG.gy));
+      gscore.set(startKey, 0);
+      const inBounds = (x:number,y:number) => x>=0 && y>=0 && x<w && y<h;
+      while (openHeap.length) {
+        const cur = popHeap(); if (!cur) break;
+        const [cx,cy] = cur.k.split(',').map(s=>parseInt(s,10));
+        if (cur.k === goalKey) break;
+        for (const d of dirs) {
+          const nx = cx + d.x; const ny = cy + d.y;
+          if (!inBounds(nx,ny)) continue;
+          if (occ[ny][nx]) continue;
+          const nk = `${nx},${ny}`;
+          const tentative = (gscore.get(cur.k) || Infinity) + 1;
+          if (tentative < (gscore.get(nk) || Infinity)) {
+            parents.set(nk, cur.k);
+            const prio = tentative + Math.abs(nx - toG.gx) + Math.abs(ny - toG.gy);
+            pushHeap(nk, tentative, prio);
+          }
+        }
+      }
+      if (!parents.has(goalKey) && startKey !== goalKey) return null;
+      // reconstruct path
+      const rev: Cell[] = [];
+      let curk = goalKey;
+      rev.push({ x: toG.gx, y: toG.gy });
+      while (curk !== startKey) {
+        const p = parents.get(curk);
+        if (!p) break;
+        const parts = p.split(',').map(s=>parseInt(s,10));
+        rev.push({ x: parts[0], y: parts[1] });
+        curk = p;
+      }
+      rev.reverse();
+      // convert grid path to world coordinates (cell centers)
+      const pts = rev.map(c => ({ x: (c.x + minX) * cell, y: (c.y + minY) * cell }));
+      // Simplify polyline by removing collinear points
+      const simp: {x:number;y:number}[] = [];
+      for (let i = 0; i < pts.length; i++) {
+        if (i === 0 || i === pts.length - 1) { simp.push(pts[i]); continue; }
+        const a = pts[i-1], b = pts[i], c = pts[i+1];
+        const vx1 = b.x - a.x, vy1 = b.y - a.y;
+        const vx2 = c.x - b.x, vy2 = c.y - b.y;
+        if (Math.abs(vx1*vy2 - vy1*vx2) < 0.01) continue; // collinear
+        simp.push(b);
+      }
+      // ensure start and end attach exactly to requested start/end
+      if (simp.length === 0) return null;
+      simp[0] = start; simp[simp.length-1] = end;
+      return { points: simp, routed: true };
+    };
+
+    // Try orthogonal A* for all attachment pairs
+    for (const fp of fromPts) {
+      for (const tp of toPts) {
+  const r = orthogonalAStar(fp, tp) || null;
+        if (r && r.points) {
+          // compute length
+          let len = 0;
+          for (let i = 0; i < r.points.length - 1; i++) len += Math.hypot(r.points[i+1].x - r.points[i].x, r.points[i+1].y - r.points[i].y);
+          if (len < bestLen) { bestLen = len; best = r; }
+        }
+        // otherwise fallback to previous heuristics
+        const heur = computeRoute(fp.x, fp.y, tp.x, tp.y, [from.id, to.id]);
+        if (heur && heur.points) {
+          let len = 0; for (let i = 0; i < heur.points.length - 1; i++) len += Math.hypot(heur.points[i+1].x - heur.points[i].x, heur.points[i+1].y - heur.points[i].y);
+          if (len < bestLen) { bestLen = len; best = heur; }
+        }
+      }
+    }
+    return best || { points: [{ x: from.x, y: from.y }, { x: to.x, y: to.y }], routed: false };
   };
 
   // Helper: regenerate prompt from nodes, edges, clusters (flat, includes cross-cluster edges)
   const regeneratePrompt = (nodes: Node[], edges: Edge[], clusters: Cluster[]): string => {
-    let prompt = '';
-    for (const cluster of clusters) {
-      prompt += `Cluster: ${cluster.label}\n`;
+    // Build a map of clusters by parentId for nesting
+    const byParent = new Map<string | undefined, Cluster[]>();
+    clusters.forEach(c => {
+      const p = c.parentId;
+      if (!byParent.has(p)) byParent.set(p, []);
+      byParent.get(p)!.push(c);
+    });
+
+    // Helper to recursively print clusters and their nodes with indentation
+    const printCluster = (cluster: Cluster, indent: number): string => {
+      const pad = '  '.repeat(indent);
+      let out = `${pad}Cluster: ${cluster.label}\n`;
+      // Print nodes in this cluster
       for (const node of nodes.filter(n => n.clusterId === cluster.id)) {
-        prompt += `  Node: ${node.label}`;
-        if (node.name) prompt += ` [name=${node.name}]`;
-        prompt += '\n';
+        out += `${pad}  Node: ${node.label}`;
+        if (node.name) out += ` [name=${node.name}]`;
+        out += '\n';
       }
+      // Print child clusters
+      const children = byParent.get(cluster.id) || [];
+      for (const child of children) {
+        out += printCluster(child, indent + 1);
+      }
+      return out;
+    };
+
+    // Print all top-level clusters
+    let prompt = '';
+    const topClusters = byParent.get(undefined) || [];
+    for (const cluster of topClusters) {
+      prompt += printCluster(cluster, 0);
     }
+
     // List all edges, including cross-cluster, using node.name if present
     for (const edge of edges) {
       const from = nodes.find(n => n.id === edge.from);
@@ -264,8 +518,8 @@ function App() {
       if (from && to) {
         const fromName = from.name || from.label;
         const toName = to.name || to.label;
-  const edgeObj = edge as Edge & { lable?: string };
-  const edgeLabel = edgeObj.label || edgeObj.lable || '';
+        const edgeObj = edge as Edge & { lable?: string };
+        const edgeLabel = edgeObj.label || edgeObj.lable || '';
         prompt += `${fromName} -> ${toName}`;
         if (edge.type || edgeLabel) {
           prompt += ' [';
@@ -293,14 +547,16 @@ function App() {
     const cursorpt = pt.matrixTransform(svg.getScreenCTM()?.inverse());
     const clusterId = findClusterAt(cursorpt.x, cursorpt.y);
     setNodes((nodes: Node[]) => {
+      // If dropped inside a cluster, snap to a free nearby position to avoid overlapping other icons
+      const pos = clusterId ? findPositionNearCluster(clusterId, 180, 100) : { x: cursorpt.x, y: cursorpt.y };
       const newNodes = [
         ...nodes,
         {
           id: `${iconType}-${Date.now()}`,
           label: icon.label,
           name: '',
-          x: cursorpt.x,
-          y: cursorpt.y,
+          x: pos.x,
+          y: pos.y,
           color: icon.color,
           clusterId: clusterId || undefined // Only assign if inside a cluster
         }
@@ -364,9 +620,12 @@ function App() {
       return;
     }
     // set a short timer to perform single-click action (delete) if no double-click follows
+    const mods = { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey };
     clickTimers.current[nodeId] = window.setTimeout(() => {
       clickTimers.current[nodeId] = null;
-      if (window.confirm('Delete this node and its connected edges?')) {
+      // require Ctrl+Shift+Click to delete to avoid accidental deletes
+      if (!(mods.ctrl && mods.shift)) return;
+      if (window.confirm('Delete this node and its connected edges? (Ctrl+Shift+Click confirmed)')) {
         // compute new nodes and edges and update prompt deterministically
         setNodes((prevNodes: Node[]) => {
           const newNodes = prevNodes.filter((n: Node) => n.id !== nodeId);
@@ -529,44 +788,59 @@ function App() {
   function getClusterBBox(clusterId: string): { x: number; y: number; w: number; h: number } {
     // Recursive bbox: include nodes in this cluster and bboxes of child clusters
     const visited = new Set<string>();
-    function compute(id: string): { x: number; y: number; w: number; h: number } {
+  function compute(id: string, depth = 0): { x: number; y: number; w: number; h: number } {
       if (visited.has(id)) return { x: 100, y: 80, w: 180, h: 100 };
       visited.add(id);
-      const nodesInCluster = nodes.filter(n => n.clusterId === id);
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const n of nodesInCluster) {
-        minX = Math.min(minX, n.x - 36);
-        minY = Math.min(minY, n.y - 36);
-        maxX = Math.max(maxX, n.x + 36);
-        maxY = Math.max(maxY, n.y + 36);
-      }
-      // include child clusters
-  const childClusters = clusters.filter(c => c.parentId === id);
+        const nodesInCluster = nodes.filter(n => n.clusterId === id);
+        // icon half-size (icons are drawn in a 36x36 box) and label offset below the icon
+        const iconHalf = 18;
+        const labelBelow = 22; // space for the node label rendered below the icon
+        const nodeMargin = 8; // small breathing room around nodes
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const n of nodesInCluster) {
+          const left = n.x - iconHalf - nodeMargin;
+          const right = n.x + iconHalf + nodeMargin;
+          const top = n.y - iconHalf - nodeMargin;
+          const bottom = n.y + iconHalf + labelBelow + nodeMargin;
+          minX = Math.min(minX, left);
+          minY = Math.min(minY, top);
+          maxX = Math.max(maxX, right);
+          maxY = Math.max(maxY, bottom);
+        }
+      // include child clusters and leave a larger gap between parent and child outlines
+      const childClusters = clusters.filter(c => c.parentId === id);
+  // Base gap between a parent outline and its child cluster outline. Increase slightly with depth
+  const baseChildGap = 32; // make base gap larger so parent/child outlines are clearly separated
+  const childGap = baseChildGap + depth * 8; // deeper nesting gets more breathing room
       for (const child of childClusters) {
-        const b = compute(child.id);
-        minX = Math.min(minX, b.x);
-        minY = Math.min(minY, b.y);
-        maxX = Math.max(maxX, b.x + b.w);
-        maxY = Math.max(maxY, b.y + b.h);
+        const b = compute(child.id, depth + 1);
+        minX = Math.min(minX, b.x - childGap);
+        minY = Math.min(minY, b.y - childGap);
+        maxX = Math.max(maxX, b.x + b.w + childGap);
+        maxY = Math.max(maxY, b.y + b.h + childGap);
       }
       if (minX === Infinity) {
         // empty cluster: pick a free spot using helper
         const pos = findEmptyClusterPosition(180, 100);
         return { x: pos.x, y: pos.y, w: 180, h: 100 };
       }
-  const pad = 8; // reduced padding to minimize whitespace around cluster contents
+  // increase padding for nested clusters to create clearer gap between outlines
+  // Increase padding for the returned bbox; scale a bit with depth to keep nested gaps visible
+  const basePad = 24;
+  const pad = basePad + Math.max(0, depth) * 6;
   return { x: minX - pad, y: minY - pad, w: maxX - minX + 2 * pad, h: maxY - minY + 2 * pad };
     }
     return compute(clusterId);
   };
 
   // Prompt parsing handler (restored to correct scope)
-  const handleParsePrompt = async () => {
+  const handleParsePrompt = async (promptText?: string) => {
+    const usedPrompt = promptText ?? prompt;
     setLoading(true);
     setError(null);
     // Immediately parse locally so the UI updates with user-provided labels while preserving positions
     try {
-  const localImmediate = parsePromptLocally(prompt, nodesRef.current, clustersRef.current);
+      const localImmediate = parsePromptLocally(usedPrompt, nodesRef.current);
       const mergedLocal = mergeParsedWithExisting(localImmediate, nodesRef.current, clustersRef.current);
       const layoutLocal = layoutClusters(mergedLocal.clusters, mergedLocal.nodes);
       setNodes(layoutLocal.nodes);
@@ -579,10 +853,10 @@ function App() {
       const res = await fetch('http://localhost:5001/api/ollama/parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt: usedPrompt }),
       });
       if (!res.ok) throw new Error('Backend error');
-      const dataUnknown = await res.json() as unknown;
+  const dataUnknown = await res.json() as unknown;
       const isParseResult = (v: unknown): v is { nodes: Node[]; edges: Edge[]; clusters: Cluster[] } => {
         if (typeof v !== 'object' || v === null) return false;
         const vv = v as Record<string, unknown>;
@@ -595,7 +869,7 @@ function App() {
         // compute layout (non-fixed) and then apply exactly the parsed items to state so prompt is authoritative
         const layoutBackend = layoutClusters(mergedBackend.clusters, mergedBackend.nodes);
          // build a final edge set that prefers explicit label fields (and accepts 'lable' typo)
-  const local = parsePromptLocally(prompt, nodesRef.current, clustersRef.current);
+  const local = parsePromptLocally(usedPrompt, nodesRef.current);
    const localMap = new Map(local.edges.map(e => [`${e.from}::${e.to}`, e]));
   const mergedEdges: Edge[] = mergedBackend.edges.map((e: Edge) => {
     const key = `${e.from}::${e.to}`;
@@ -613,7 +887,7 @@ function App() {
    setEdges(mergedEdges);
       } else {
         // fallback to local parse
-  const local = parsePromptLocally(prompt, nodesRef.current, clustersRef.current);
+  const local = parsePromptLocally(prompt, nodesRef.current);
         setNodes(local.nodes);
         setEdges(local.edges);
         setClusters(local.clusters);
@@ -622,7 +896,7 @@ function App() {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
       // on error, try local parse so user changes appear without backend
-  const local = parsePromptLocally(prompt, nodesRef.current, clustersRef.current);
+  const local = parsePromptLocally(prompt, nodesRef.current);
       setNodes(local.nodes);
       setEdges(local.edges);
       setClusters(local.clusters);
@@ -637,23 +911,32 @@ function App() {
   //    Node: Label [name=alias]
   //  A -> B [arrow=solid, label=foo]  (accepts 'lable' typo)
   // accepts optional existingNodes and existingClusters to attempt matching by label/name
-  const parsePromptLocally = (text: string, existingNodes?: Node[], existingClusters?: Cluster[]) => {
-    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  const parsePromptLocally = (text: string, existingNodes?: Node[]) => {
+    const lines = text.split(/\r?\n/);
     const outClusters: Cluster[] = [];
     const outNodes: Node[] = [];
     const outEdges: Edge[] = [];
-    let currentCluster: string | null = null;
+    const clusterStack: { id: string, indent: number }[] = [];
+    const clusterNodes: Record<string, unknown[]> = {};
     for (const line of lines) {
-      const mCluster = line.match(/^Cluster:\s*(.+)$/i);
+      const indentMatch = line.match(/^([ \t]*)/);
+      const indent = indentMatch ? indentMatch[1].length : 0;
+      const mCluster = line.match(/^[ \t]*Cluster:\s*(.+)$/i);
       if (mCluster) {
         const label = mCluster[1].trim();
         const id = label.toLowerCase().replace(/\s+/g,'-');
-        outClusters.push({ id, label });
-        currentCluster = id;
+        // Pop stack until the top has a lower indent
+        while (clusterStack.length && clusterStack[clusterStack.length - 1].indent >= indent) {
+          clusterStack.pop();
+        }
+        const parentId = clusterStack.length ? clusterStack[clusterStack.length - 1].id : undefined;
+        outClusters.push({ id, label, parentId });
+        clusterNodes[id] = [];
+        clusterStack.push({ id, indent });
         continue;
       }
-  const mNode = line.match(/^Node:\s*([^[]+)(?:\s*\[(.+)\])?$/i);
-      if (mNode) {
+      const mNode = line.match(/^[ \t]*Node:\s*([^[]+)(?:\s*\[(.+)\])?$/i);
+      if (mNode && clusterStack.length) {
         const label = mNode[1].trim();
         const attrs = mNode[2];
         let name: string | undefined = undefined;
@@ -662,8 +945,9 @@ function App() {
           if (nameMatch) name = nameMatch[1].trim();
         }
         const id = (name || label).toLowerCase().replace(/\s+/g,'-') + '-' + Date.now() + '-' + Math.round(Math.random()*1000);
-        const pos = findEmptyClusterPosition(180, 100);
-        outNodes.push({ id, label: label.trim(), name: name ? name.trim() : undefined, x: pos.x, y: pos.y, clusterId: currentCluster || undefined });
+  const currentCluster = clusterStack[clusterStack.length - 1].id;
+  const pos = findPositionNearCluster(currentCluster, 180, 100);
+  outNodes.push({ id, label: label.trim(), name: name ? name.trim() : undefined, x: pos.x, y: pos.y, clusterId: currentCluster });
         continue;
       }
       const mEdge = line.match(/^(.+?)\s*->\s*(.+?)\s*(?:\[(.+)\])?$/i);
@@ -701,10 +985,10 @@ function App() {
         };
         const fromId = findId(fromLabel);
         const toId = findId(toLabel);
-  const arrowType = (a['arrow'] || a['type']) as Edge['type'] | undefined;
-  const rawLbl = a['label'] || a['lable'] || '';
-  const lbl = typeof rawLbl === 'string' ? rawLbl.trim() : '';
-  outEdges.push({ id: `e-${fromId}-${toId}-${Date.now()}`, from: fromId, to: toId, label: lbl, type: arrowType });
+        const arrowType = (a['arrow'] || a['type']) as Edge['type'] | undefined;
+        const rawLbl = a['label'] || a['lable'] || '';
+        const lbl = typeof rawLbl === 'string' ? rawLbl.trim() : '';
+        outEdges.push({ id: `e-${fromId}-${toId}-${Date.now()}`, from: fromId, to: toId, label: lbl, type: arrowType });
         continue;
       }
     }
@@ -715,18 +999,26 @@ function App() {
   const mergeParsedWithExisting = (parsed: { nodes: Node[]; edges: Edge[]; clusters: Cluster[] },
                                    existingNodes: Node[], existingClusters: Cluster[]) => {
     // cluster id mapping: parsed cluster id -> existing cluster id (matched by label case-insensitive)
+    // We build the clusterMap first, then construct mergedClusters so that the parsed parent-child
+    // relationships are preserved exactly (no inference or preservation of old parentIds).
     const clusterMap = new Map<string, string>();
     const existingClusterByLabel = new Map<string, Cluster>();
     for (const c of existingClusters) existingClusterByLabel.set(c.label.toLowerCase(), c);
-    const mergedClusters: Cluster[] = [];
+    // First pass: establish mapping from parsed cluster id to final cluster id (existing id if label matches, otherwise keep parsed id)
     for (const pc of parsed.clusters) {
       const found = existingClusterByLabel.get(pc.label.toLowerCase());
+      clusterMap.set(pc.id, found ? found.id : pc.id);
+    }
+    // Second pass: construct mergedClusters but enforce the parsed parentId mapping (mapped through clusterMap).
+    const mergedClusters: Cluster[] = [];
+    for (const pc of parsed.clusters) {
+      const mappedParent = pc.parentId ? (clusterMap.get(pc.parentId) || pc.parentId) : undefined;
+      const found = existingClusterByLabel.get(pc.label.toLowerCase());
       if (found) {
-        clusterMap.set(pc.id, found.id);
-        mergedClusters.push({ ...found, label: pc.label });
+        // Use the existing cluster id but override its parentId with the parsed (mapped) parent.
+        mergedClusters.push({ ...found, label: pc.label, parentId: mappedParent });
       } else {
-        mergedClusters.push(pc);
-        clusterMap.set(pc.id, pc.id);
+        mergedClusters.push({ ...pc, parentId: mappedParent });
       }
     }
   // NOTE: Do NOT append old clusters that were removed from the prompt.
@@ -749,9 +1041,9 @@ function App() {
         mergedNodes.push(merged);
         nodeMap.set(pn.id, merged.id);
       } else {
-        const pos = findEmptyClusterPosition(180, 100);
-        const newId = pn.id || (pn.label.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now());
         const mappedCluster = pn.clusterId ? (clusterMap.get(pn.clusterId) || pn.clusterId) : undefined;
+        const pos = findPositionNearCluster(mappedCluster, 180, 100);
+        const newId = pn.id || (pn.label.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now());
         const created = { ...pn, id: newId, x: pn.x || pos.x, y: pn.y || pos.y, clusterId: mappedCluster };
         mergedNodes.push(created);
         nodeMap.set(pn.id, created.id);
@@ -806,10 +1098,38 @@ function App() {
       return { id: c.id, w, h, cx, cy };
     });
 
-  const maxW = Math.max(...clusterInfo.map(ci => ci.w)) + 40;
-  const maxH = Math.max(...clusterInfo.map(ci => ci.h)) + 40;
-  // add extra spacing between grid cells to avoid congestion
-  const spacing = 80;
+    // To avoid cluster outline overlap (because getClusterBBox adds padding and child gaps),
+    // estimate a safe cell size per cluster by considering nesting depth and the padding/gap constants.
+    const baseChildGap = 32; // must match getClusterBBox baseChildGap
+    const childGapPerDepth = 8;
+    const basePad = 24; // must match getClusterBBox basePad
+    const padPerDepth = 6;
+    // compute depth for each cluster (number of ancestors)
+    const clusterById = new Map(clustersToLayout.map(c => [c.id, c] as [string, Cluster]));
+    const depthMap = new Map<string, number>();
+    const computeDepth = (cid: string | undefined): number => {
+      if (!cid) return 0;
+      if (depthMap.has(cid)) return depthMap.get(cid)!;
+      let d = 0;
+      let cur = clusterById.get(cid);
+      while (cur && cur.parentId) {
+        d++;
+        cur = clusterById.get(cur.parentId);
+      }
+      depthMap.set(cid, d);
+      return d;
+    };
+    // estimate required sizes including padding + potential child gaps
+    const estSizes = clusterInfo.map(ci => {
+      const depth = computeDepth(ci.id) || 0;
+      const extraW = 2 * (basePad + depth * padPerDepth) + 2 * (baseChildGap + depth * childGapPerDepth);
+      const extraH = 2 * (basePad + depth * padPerDepth) + 2 * (baseChildGap + depth * childGapPerDepth);
+      return { w: ci.w + extraW + 40, h: ci.h + extraH + 40 };
+    });
+    const maxW = Math.max(...estSizes.map(s => s.w));
+    const maxH = Math.max(...estSizes.map(s => s.h));
+    // add extra spacing between grid cells to avoid congestion
+    const spacing = Math.max(120, Math.floor(Math.min(maxW, maxH) / 3));
   const cellW = maxW + spacing;
   const cellH = maxH + spacing;
 
@@ -883,61 +1203,88 @@ function App() {
       }
     }
 
+    // After shifting nodes into their grid cells, pack members inside each cluster to avoid overlaps
+    // Build a map from cluster id to cell centers for packing
+    const cellCenterMap = new Map<string, { cx: number; cy: number }>();
+    for (let i = 0; i < assign.length; i++) {
+      const cid = assign[i];
+      const cell = cells[i];
+      cellCenterMap.set(cid, { cx: cell.cx, cy: cell.cy });
+    }
+    // pack each cluster's members into a small grid around the cluster cell center
+  const spacingPack = 84; // distance between icons when packed (icon 36 + margin)
+    const nodeIndexMap = new Map<string, number[]>();
+    for (let i = 0; i < finalNodes.length; i++) {
+      const n = finalNodes[i];
+      if (!n.clusterId) continue;
+      if (!nodeIndexMap.has(n.clusterId)) nodeIndexMap.set(n.clusterId, []);
+      nodeIndexMap.get(n.clusterId)!.push(i);
+    }
+    for (const [cid, idxs] of nodeIndexMap.entries()) {
+      if (idxs.length <= 1) continue;
+      const center = cellCenterMap.get(cid) || { cx: finalNodes[idxs[0]].x, cy: finalNodes[idxs[0]].y };
+      const count = idxs.length;
+      const colsPack = Math.ceil(Math.sqrt(count));
+      const rowsPack = Math.ceil(count / colsPack);
+  const startX = center.cx - ((colsPack - 1) * spacingPack) / 2;
+  const startY = center.cy - ((rowsPack - 1) * spacingPack) / 2;
+      for (let k = 0; k < idxs.length; k++) {
+        const row = Math.floor(k / colsPack);
+        const col = k % colsPack;
+  const targetX = startX + col * spacingPack;
+  const targetY = startY + row * spacingPack;
+        const idx = idxs[k];
+        finalNodes[idx] = { ...finalNodes[idx], x: targetX, y: targetY };
+      }
+    }
+
     // include any clusters that couldn't be placed (if any)
     for (const c of clustersToLayout) if (!finalClusters.find(fc => fc.id === c.id)) finalClusters.push({ ...c, x: originX, y: originY });
 
     return { clusters: finalClusters, nodes: finalNodes };
   };
+  
 
-  // Categorized icon library
-const iconCategories = [
-  {
-    name: 'General',
-    icons: [
-      { type: 'user', label: 'User', color: '#e3f2fd', icon: '👤' },
-      { type: 'system', label: 'System', color: '#fffde7', icon: '💻' },
-      { type: 'database', label: 'Database', color: '#e8f5e9', icon: '🗄️' },
-      { type: 'server', label: 'Server', color: '#e0e0e0', icon: '🖥️' },
-      { type: 'network', label: 'Network', color: '#b3e5fc', icon: '🌐' },
-      { type: 'storage', label: 'Storage', color: '#ffe0b2', icon: '💾' },
-      { type: 'queue', label: 'Queue', color: '#f8bbd0', icon: '📬' },
-      { type: 'api', label: 'API', color: '#c8e6c9', icon: '🔗' },
-      { type: 'mobile', label: 'Mobile', color: '#f0f4c3', icon: '📱' },
-      { type: 'web', label: 'Web', color: '#b2dfdb', icon: '🌍' },
-    ]
-  },
-  {
-    name: 'AWS',
-    icons: [
-      { type: 'aws-ec2', label: 'EC2', color: '#ffecb3', icon: '🟧' },
-      { type: 'aws-s3', label: 'S3', color: '#ffe082', icon: '🟨' },
-      { type: 'aws-lambda', label: 'Lambda', color: '#ffd54f', icon: '🟨' },
-      { type: 'aws-rds', label: 'RDS', color: '#b3e5fc', icon: '🟦' },
-      { type: 'aws-vpc', label: 'VPC', color: '#b2dfdb', icon: '🟩' },
-      { type: 'aws-cloudfront', label: 'CloudFront', color: '#f8bbd0', icon: '🟪' },
-    ]
-  },
-  {
-    name: 'Azure',
-    icons: [
-      { type: 'azure-vm', label: 'VM', color: '#e1bee7', icon: '🔷' },
-      { type: 'azure-sql', label: 'SQL DB', color: '#b3e5fc', icon: '🔷' },
-      { type: 'azure-functions', label: 'Functions', color: '#fff9c4', icon: '⚡' },
-      { type: 'azure-blob', label: 'Blob', color: '#b2dfdb', icon: '🔷' },
-    ]
-  },
-  {
-    name: 'GCP',
-    icons: [
-      { type: 'gcp-compute', label: 'Compute', color: '#ffe0b2', icon: '🟥' },
-      { type: 'gcp-storage', label: 'Storage', color: '#b2dfdb', icon: '🟦' },
-      { type: 'gcp-sql', label: 'SQL', color: '#c8e6c9', icon: '🟩' },
-      { type: 'gcp-functions', label: 'Functions', color: '#f8bbd0', icon: '🟪' },
-    ]
-  }
-];
+  // iconCategories is state so we can merge runtime-provided vendor icons (from public/icons/manifest.json)
+  type IconCategory = { name: string; icons: IconDef[] };
+  const [iconCategories, setIconCategories] = useState<IconCategory[]>(baseIconCategories as IconCategory[]);
+
+  // On mount, try to fetch a manifest that lists all SVGs under /icons and add them as categories (AWS/Azure/GCP)
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/icons/manifest.json');
+        if (!res.ok) return;
+        const manifest = await res.json() as Record<string, string[]>;
+        // Ensure preferred vendor ordering: AWS, Azure, GCP first
+        const preferred = ['AWS', 'Azure', 'GCP'];
+        const keys = Array.from(new Set([...preferred, ...Object.keys(manifest)]));
+        const vendorCats = keys.filter(k => manifest[k] && manifest[k].length).map(k => ({
+          name: k,
+          icons: (manifest[k] || []).map(p => {
+            const name = p.split('/').pop() || p;
+            const label = name.replace(/\.svg$/i, '');
+            const type = (k + '-' + label).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            return { type, label, color: '#9ca3af', icon: p } as IconDef;
+          })
+        }));
+        // Replace categories with base + ordered vendor categories
+        setIconCategories(() => {
+          return [...(baseIconCategories as IconCategory[]), ...vendorCats];
+        });
+      } catch {
+        // ignore manifest load errors
+      }
+    })();
+  }, []);
 // Flatten all icons for lookup
-const allIcons = iconCategories.flatMap(cat => cat.icons);
+// uploaded icons (SVGs) added by the user
+type IconDef = { type: string; label: string; color: string; icon: string };
+type UploadedIcon = { type: string; label: string; color?: string; icon: string };
+const [uploadedIcons, setUploadedIcons] = useState<UploadedIcon[]>([]);
+// search term for icons
+const [iconSearch, setIconSearch] = useState<string>('');
+const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(uploadedIcons as IconDef[]);
 
   // Compute tight bounding box for all visible diagram content (nodes + clusters)
   const getDiagramBBox = () => {
@@ -979,12 +1326,34 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
   };
 
   // Add export handlers inside App()
-  const handleSaveSVG = () => {
+  const handleSaveSVG = async () => {
     const svg = document.querySelector('svg');
     if (!svg) return;
     const bbox = getDiagramBBox();
-  // Wrap existing svg content into a new cropped svg string
-    const inner = svg.innerHTML;
+
+    // Clone and inline external images
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    try {
+      const imgs = Array.from(clone.querySelectorAll('image')) as SVGImageElement[];
+      await Promise.all(imgs.map(async (img) => {
+        try {
+          let href = img.getAttribute('href') || img.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || '';
+          if (!href) return;
+          if (href.startsWith('data:')) return;
+          if (href.startsWith('/')) href = window.location.origin + href;
+          const res = await fetch(href);
+          if (!res.ok) return;
+          const blob = await res.blob();
+          const dataUrl = await new Promise<string>((resolve) => {
+            const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.readAsDataURL(blob);
+          });
+          img.setAttribute('href', dataUrl);
+          img.removeAttribute('xlink:href');
+  } catch { /* ignore */ }
+      }));
+  } catch { /* ignore */ }
+
+    const inner = clone.innerHTML;
     const cropped = `<?xml version="1.0" encoding="utf-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${bbox.w}" height="${bbox.h}" viewBox="0 0 ${bbox.w} ${bbox.h}">\n  <g transform="translate(${-bbox.x},${-bbox.y})">${inner}</g>\n</svg>`;
     const blob = new Blob([cropped], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -1001,7 +1370,56 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
     const svg = document.querySelector('svg');
     if (!svg) return;
     const bbox = getDiagramBBox();
-    const inner = svg.innerHTML;
+  // Clone the SVG and replace foreignObject emoji blocks with SVG <text> so rasterization works
+  const clone = svg.cloneNode(true) as SVGSVGElement;
+    try {
+      const fobjs = Array.from(clone.querySelectorAll('foreignObject'));
+      for (const f of fobjs) {
+        // find inner text (emoji) if present
+        let emoji = '';
+        try {
+          const div = f.querySelector('div');
+          emoji = div ? (div.textContent || '') : (f.textContent || '');
+  } catch {
+          emoji = f.textContent || '';
+        }
+        const x = parseFloat(f.getAttribute('x') || '0');
+        const y = parseFloat(f.getAttribute('y') || '0');
+        const w = parseFloat(f.getAttribute('width') || '36');
+        const h = parseFloat(f.getAttribute('height') || '36');
+        const tx = x + w / 2;
+        const ty = y + h / 2 + 6; // adjust baseline
+        const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        textEl.setAttribute('x', String(tx));
+        textEl.setAttribute('y', String(ty));
+        textEl.setAttribute('font-size', '28');
+        textEl.setAttribute('text-anchor', 'middle');
+        textEl.setAttribute('fill', '#ffffff');
+        textEl.textContent = emoji;
+        f.parentNode?.replaceChild(textEl, f);
+      }
+    } catch {
+      // if anything goes wrong, fall back to original innerHTML
+    }
+    // Inline external <image> hrefs so rasterization includes vendor icons
+    try {
+      const imgs = Array.from(clone.querySelectorAll('image')) as SVGImageElement[];
+      await Promise.all(imgs.map(async (img) => {
+        try {
+          let href = img.getAttribute('href') || img.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || '';
+          if (!href) return;
+          if (href.startsWith('data:')) return;
+          if (href.startsWith('/')) href = window.location.origin + href;
+          const res = await fetch(href);
+          if (!res.ok) return;
+          const blob = await res.blob();
+          const dataUrl = await new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.readAsDataURL(blob); });
+          img.setAttribute('href', dataUrl);
+          img.removeAttribute('xlink:href');
+  } catch { /* ignore */ }
+      }));
+  } catch { /* ignore */ }
+    const inner = clone.innerHTML;
     // Increase raster resolution by current zoom and devicePixelRatio so exported PNG stays sharp
     const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
     const scale = Math.max(1, zoom * dpr);
@@ -1058,49 +1476,138 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
       {/* Header */}
       <header style={{ height: 68, background: 'linear-gradient(90deg,#0f172a,#111827)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', boxShadow: '0 2px 8px rgba(2,6,23,0.6)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#22c1c3,#fdbb2d)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, color: '#04101a' }}>V</div>
+          <img src="/vizcode.svg" alt="VizCode" style={{ width: 52, height: 52, borderRadius: 10 }} />
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 0.4 }}>VizCode</div>
-            <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 2 }}>Visual diagrams from code</div>
+            <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 0.6, background: 'linear-gradient(90deg,#7dd3fc,#60a5fa)', WebkitBackgroundClip: 'text', color: 'transparent' }}>VizCode</div>
+            <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>Visual diagrams from code</div>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ color: '#9ca3af', fontSize: 13 }}>Beta</div>
-          <div style={{ color: '#cbd5e1', fontSize: 13 }}>
-            <a href="mailto:dineshks814@gmail.com" style={{ color: '#cbd5e1', textDecoration: 'none' }}>By Dinesh Siddeshwar</a>
-          </div>
+          {/* Help button (?) opens a modal with detailed help content (fetched from public/help.html) */}
+          <button title="Help" onClick={async () => {
+            // fetch help HTML and display in modal
+            try {
+              const res = await fetch('/help.html');
+              const html = await res.text();
+              const modal = document.createElement('div');
+              modal.setAttribute('id', 'vizcode-help-modal');
+              modal.style.position = 'fixed';
+              modal.style.left = '0'; modal.style.top = '0'; modal.style.right = '0'; modal.style.bottom = '0';
+              modal.style.display = 'flex'; modal.style.alignItems = 'center'; modal.style.justifyContent = 'center';
+              modal.style.background = 'rgba(2,6,23,0.6)'; modal.style.zIndex = '9999';
+              // wrap fetched HTML in a viz-help container so css is scoped and prevent body scroll while open
+              modal.innerHTML = `
+                <div style="width:calc(100% - 80px); max-width:960px; max-height:88vh; background:transparent; border-radius:12px; overflow:hidden; box-shadow:0 12px 40px rgba(2,6,23,0.6);">
+                  <div style="display:flex; justify-content:flex-end; padding:6px; background:transparent;">
+                    <button id="vizcode-help-close" style="background:#0b1220; border:0; color:#ffffff; font-size:18px; padding:6px 10px; border-radius:8px; cursor:pointer">✕</button>
+                  </div>
+                  <div style="padding:0; height:calc(88vh - 56px); overflow:auto; background:transparent"><div class='viz-help'>${html}</div></div>
+                </div>
+              `;
+              document.body.appendChild(modal);
+              // prevent background from scrolling while modal is open
+              const prevOverflow = document.body.style.overflow;
+              document.body.style.overflow = 'hidden';
+              const closeBtn = document.getElementById('vizcode-help-close');
+              closeBtn?.addEventListener('click', () => { document.body.style.overflow = prevOverflow; modal.remove(); });
+            } catch {
+              alert('Failed to load help content');
+            }
+          }} style={{ background: '#ffa726', border: '0', color: '#071026', padding: '8px 12px', borderRadius: 8, fontSize: 14, cursor: 'pointer', fontWeight: 700 }}>
+            Help
+          </button>
         </div>
       </header>
       {/* Main content area */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
       {/* Column 1: Icon & Arrow Library */}
       <aside className="icon-library" style={{ overflowY: 'auto', maxHeight: '90vh', minWidth: 180, background: '#23272f', color: '#fff', borderRight: '2px solid #333' }}>
-  <h4 style={{ fontSize: 16, margin: '0 0 10px 0', fontWeight: 600 }}>Icons & Arrows</h4>
+  <h4 style={{ fontSize: 16, margin: '0 0 10px 0', fontWeight: 600 }}>Icons</h4>
+  <div style={{ margin: '6px 0 10px 0' }}>
+    <input value={iconSearch} onChange={e => setIconSearch(e.target.value)} placeholder="Search icons..." style={{ width: '100%', padding: '6px 8px', borderRadius: 8, border: '1px solid #374151', background: '#0f172a', color: '#fff' }} />
+  </div>
+  <div style={{ margin: '6px 0 10px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
+    <label style={{ fontSize: 12, color: '#cbd5e1' }}>Upload SVG:</label>
+    <input type="file" accept="image/svg+xml" onChange={(e) => {
+            const f = e.target.files && e.target.files[0];
+            if (!f) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              const txt = String(ev.target?.result || '');
+              // Basic sanitize: ensure it starts with <svg
+  if (!/<svg[\s\S]*>/i.test(txt)) { alert('Invalid SVG'); return; }
+              const dataUrl = 'data:image/svg+xml;utf8,' + encodeURIComponent(txt);
+              const label = f.name.replace(/\.svg$/i, '');
+              const id = label.toLowerCase().replace(/\s+/g,'-') + '-' + Date.now();
+              setUploadedIcons(prev => [...prev, { type: id, label, icon: dataUrl }]);
+            };
+            reader.readAsText(f);
+            // reset input so same file can be uploaded again
+            (e.target as HTMLInputElement).value = '';
+          }} style={{ fontSize: 12, color: '#cbd5e1' }} />
+        </div>
   <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-    {iconCategories.map(category => (
+    {uploadedIcons.filter(ic => ic.label.toLowerCase().includes(iconSearch.toLowerCase()) || ic.type.toLowerCase().includes(iconSearch.toLowerCase())).length > 0 && (
+          <div style={{ marginTop: 4 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, margin: '8px 0 6px 0', color: '#ffa726', letterSpacing: 1 }}>Uploaded</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+      {uploadedIcons.filter(ic => ic.label.toLowerCase().includes(iconSearch.toLowerCase()) || ic.type.toLowerCase().includes(iconSearch.toLowerCase())).map(ic => (
+                <div key={ic.type} draggable onDragStart={e => e.dataTransfer.setData('iconType', ic.type)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'grab', border: '1px solid #444', borderRadius: 8, padding: '6px', background: '#2c313a', width: 54, height: 54, justifyContent: 'center' }} title={`Drag to add ${ic.label}`}>
+                  {/* render SVG using <img> with data URL */}
+                  <img src={ic.icon} alt={ic.label} style={{ width: 28, height: 28, objectFit: 'contain', display: 'block' }} />
+                  <span style={{ fontSize: 11, color: '#ffa726', fontWeight: 500 }}>{ic.label}</span>
+                </div>
+      ))}
+            </div>
+          </div>
+        )}
+
+  {iconCategories.map(category => (
       <div key={category.name} style={{ marginBottom: 8 }}>
         <div style={{ fontWeight: 700, fontSize: 15, margin: '8px 0 6px 0', color: '#ffa726', letterSpacing: 1 }}>{category.name}</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {category.icons.map(icon => (
-            <div
+        {category.icons.filter(icon => icon.label.toLowerCase().includes(iconSearch.toLowerCase()) || icon.type.toLowerCase().includes(iconSearch.toLowerCase())).map(icon => (
+                <div
               key={icon.type}
               draggable
               onDragStart={e => e.dataTransfer.setData('iconType', icon.type)}
               style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'grab',
-                border: '1px solid #444', borderRadius: 8, padding: '8px 8px', background: '#2c313a',
-                fontSize: 22, width: 54, height: 54, justifyContent: 'center', color: '#fff',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'grab',
+                    border: '1px solid #444', borderRadius: 8, padding: '6px', background: '#2c313a',
+                    fontSize: 28, width: 54, height: 72, justifyContent: 'flex-start', color: '#fff', boxSizing: 'border-box',
               }}
               title={`Drag to add a ${icon.label}`}
             >
-              <span>{icon.icon}</span>
-              <span style={{ fontSize: 11, color: '#ffa726', fontWeight: 500 }}>{icon.label}</span>
+                  {/* Render SVG path icons as images, uploaded SVGs as img data URL, otherwise emoji text */}
+                  {typeof icon.icon === 'string' && icon.icon.match(/\.svg$/i) ? (
+                    <img src={`/icons/${icon.icon}`} alt={icon.label} style={{ width: 28, height: 28, objectFit: 'contain', display: 'block' }} />
+                  ) : typeof icon.icon === 'string' && icon.icon.startsWith('data:image/svg+xml') ? (
+                    <img src={icon.icon} alt={icon.label} style={{ width: 28, height: 28, objectFit: 'contain', display: 'block' }} />
+                  ) : (
+                    <span style={{ lineHeight: '28px' }}>{icon.icon}</span>
+                  )}
+              <div style={{ fontSize: 11, color: '#ffa726', fontWeight: 500, textAlign: 'center', width: 52, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '12px', wordBreak: 'break-word', paddingTop: 2 }}>{icon.label}</div>
             </div>
           ))}
         </div>
       </div>
     ))}
-  </div>
+        {uploadedIcons.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, margin: '8px 0 6px 0', color: '#ffa726', letterSpacing: 1 }}>Uploaded</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              {uploadedIcons.map(ic => (
+                <div key={ic.type} draggable onDragStart={e => e.dataTransfer.setData('iconType', ic.type)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'grab', border: '1px solid #444', borderRadius: 8, padding: '6px', background: '#2c313a', width: 54, height: 54, justifyContent: 'center' }} title={`Drag to add ${ic.label}`}>
+                  {/* render SVG using <img> with data URL scaled to match emoji icons */}
+                  <img src={ic.icon} alt={ic.label} style={{ width: 28, height: 28, objectFit: 'contain', display: 'block' }} />
+                  <span style={{ fontSize: 11, color: '#ffa726', fontWeight: 500 }}>{ic.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+</div>
 </aside>
 
       {/* Column 2: Prompt Editor */}
@@ -1136,6 +1643,107 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
               }
             }}
           >Add</button>
+          <div style={{ marginLeft: 12 }}>
+            <label style={{ fontSize: 13, marginRight: 6 }}>Import Excel:</label>
+            <input type="file" accept=".xlsx,.xls" onChange={(e) => {
+              const inputEl = e.currentTarget as HTMLInputElement;
+              const f = inputEl.files && inputEl.files[0];
+              if (!f) return;
+              const reader = new FileReader();
+              reader.onload = async (ev) => {
+                try {
+                  const data = ev.target?.result;
+                  const wb = XLSX.read(data, { type: 'array' });
+                  // First sheet: nodes
+                  const sn = wb.SheetNames[0];
+                  const nodesRaw = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: '' }) as Record<string, unknown>[];
+                  // Second sheet: edges (optional)
+                  const edgesRaw = (wb.SheetNames[1]) ? XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[1]], { defval: '' }) as Record<string, unknown>[] : [];
+                  // Build prompt from sheets
+                  const lines: string[] = [];
+                  // Group nodes by cluster and parent cluster
+                  // Expected columns: Node, Name, Cluster, ParentCluster
+                  type NodeRow = { nodeLabel: string; nodeName: string };
+                  const byCluster = new Map<string, NodeRow[]>();
+                  const clustersSet = new Map<string, string>();
+                  for (const r of nodesRaw) {
+                    const nodeLabel = String(r['Node'] || r['node'] || r['Label'] || r['label'] || '').trim();
+                    const nodeName = String(r['Name'] || r['name'] || '').trim();
+                    const cluster = String(r['Cluster'] || r['cluster'] || '').trim() || 'default';
+                    const parent = String(r['Parent cluster'] || r['ParentCluster'] || r['parent'] || '').trim();
+                    clustersSet.set(cluster, parent);
+                    if (!byCluster.has(cluster)) byCluster.set(cluster, []);
+                    byCluster.get(cluster)!.push({ nodeLabel, nodeName });
+                  }
+                  // Build a parent->children map and emit clusters recursively so
+                  // the sheet's explicit Parent cluster relationships are preserved.
+                  const childrenMap = new Map<string, string[]>();
+                  const allClusters = Array.from(clustersSet.keys());
+                  // initialize children arrays
+                  for (const c of allClusters) childrenMap.set(c, []);
+                  // populate children map
+                  for (const c of allClusters) {
+                    const p = (clustersSet.get(c) || '').trim();
+                    if (p && allClusters.includes(p)) {
+                      childrenMap.get(p)!.push(c);
+                    }
+                  }
+
+                  // roots are clusters without a parent or whose parent is missing/empty
+                  const roots = allClusters.filter(c => {
+                    const p = (clustersSet.get(c) || '').trim();
+                    return !p || !allClusters.includes(p);
+                  });
+
+                  const indent = (d: number) => '  '.repeat(d);
+                  const emitCluster = (name: string, depth: number) => {
+                    lines.push(`${indent(depth)}Cluster: ${name}`);
+                    const arr = byCluster.get(name) || [];
+                    for (const n of arr) {
+                      let l = `${indent(depth + 1)}Node: ${n.nodeLabel}`;
+                      if (n.nodeName) l += ` [name=${n.nodeName}]`;
+                      lines.push(l);
+                    }
+                    const kids = childrenMap.get(name) || [];
+                    for (const k of kids) emitCluster(k, depth + 1);
+                  };
+
+                  // Emit all root clusters in original order, recursively emitting children
+                  for (const r of roots) emitCluster(r, 0);
+                  // Edges sheet expected columns: Source, Destination, Type
+                  for (const er of edgesRaw) {
+                    const src = String(er['Source'] || er['source'] || er['From'] || er['from'] || '').trim();
+                    const dst = String(er['Destination'] || er['destination'] || er['To'] || er['to'] || '').trim();
+                    const typ = String(er['Type'] || er['type'] || er['Arrow'] || er['arrow'] || '').trim();
+                    const edgeLabel = String(er['Label'] || er['label'] || '').trim();
+                    if (src && dst) {
+                      let ln = `${src} -> ${dst}`;
+                      const attrs: string[] = [];
+                      if (typ) attrs.push(`arrow=${typ}`);
+                      if (edgeLabel) {
+                        // escape single quotes inside the label
+                        const esc = edgeLabel.replace(/'/g, "\\'");
+                        attrs.push(`label='${esc}'`);
+                      }
+                      if (attrs.length) ln += ` [${attrs.join(', ')}]`;
+                      lines.push(ln);
+                    }
+                  }
+          const promptFromExcel = lines.join('\n');
+          // Clear prompt first, then set generated prompt so editor updates
+          setPrompt('');
+          setPrompt(promptFromExcel);
+          // Trigger the same Update Diagram action automatically and wait for it
+          await handleParsePrompt(promptFromExcel);
+          // Reset input so same file can be uploaded again
+          inputEl.value = '';
+                } catch (err) {
+                  console.error('Failed to parse Excel', err);
+                }
+        };
+              reader.readAsArrayBuffer(f);
+            }} />
+          </div>
         </div>
         <div style={{ marginBottom: 10, background: '#f5f5f5', padding: '8px 0', borderRadius: 6 }}>
           <label style={{ fontWeight: 500, fontSize: 14, marginRight: 8, marginLeft: 8 }}>Arrow Type:</label>
@@ -1262,7 +1870,7 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
             const toY = to.y - Math.sin(angle) * endOffset;
             const labelOffset = 18; // perpendicular offset distance for label above the arrow
             // compute route early so we can place label based on routed path
-            const route = computeRoute(fromX, fromY, toX, toY);
+            const route = computeRouteForNodes(from, to);
             // compute midpoint along polyline (by length) and offset perpendicular
             const computeLabelPoint = (pts: {x:number;y:number}[]) => {
               if (!pts || pts.length === 0) return { x: (fromX + toX) / 2, y: (fromY + toY) / 2 };
@@ -1310,15 +1918,18 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
             const edgeObj = edge as Edge & { lable?: string };
             const edgeLabel = edgeObj.label || edgeObj.lable || '';
             return (
-              <g key={edge.id} onClick={() => {
-                if (window.confirm('Delete this arrow?')) {
-                  setEdges((prev: Edge[]) => {
-                    const newEdges = prev.filter(e => e.id !== edge.id);
-                    setPrompt(regeneratePrompt(nodesRef.current, newEdges, clustersRef.current));
-                    return newEdges;
-                  });
-                }
-              }} style={{ cursor: 'pointer' }}>
+              <g key={edge.id} onClick={(ev: React.MouseEvent) => {
+                  // require Ctrl+Shift+Click to delete an edge to avoid accidental deletions
+                  const mods = { ctrl: ev.ctrlKey || ev.metaKey, shift: ev.shiftKey };
+                  if (!(mods.ctrl && mods.shift)) return;
+                  if (window.confirm('Delete this arrow? (Ctrl+Shift+Click confirmed)')) {
+                    setEdges((prev: Edge[]) => {
+                      const newEdges = prev.filter(e => e.id !== edge.id);
+                      setPrompt(regeneratePrompt(nodesRef.current, newEdges, clustersRef.current));
+                      return newEdges;
+                    });
+                  }
+                }} style={{ cursor: 'pointer' }}>
                     {/* Render routed polyline if needed */}
                     {(() => {
                       if (route.points.length <= 2) {
@@ -1336,19 +1947,17 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
                           />
                         );
                       }
-                      const pointsStr = route.points.map(p => `${p.x},${p.y}`).join(' ');
-                      // polyline doesn't support markers on internal segments; apply markers via separate small lines at ends if needed
-                      const first = route.points[0];
-                      const second = route.points[1];
-                      const last = route.points[route.points.length - 1];
-                      const penultimate = route.points[route.points.length - 2];
+                      // ensure drawn polyline starts/ends at the computed icon-edge offsets so it doesn't overlap icons
+                      const adjusted = route.points.slice();
+                      if (adjusted.length > 0) {
+                        adjusted[0] = { x: fromX, y: fromY };
+                        adjusted[adjusted.length - 1] = { x: toX, y: toY };
+                      }
+                      const pointsStr = adjusted.map(p => `${p.x},${p.y}`).join(' ');
+                      // polyline supports markers; render with start/end markers
                       return (
                         <g>
-                          <polyline points={pointsStr} fill="none" stroke="#607d8b" strokeWidth={2} strokeDasharray={strokeDasharray} />
-                          {/* Start marker line */}
-                          <line x1={first.x} y1={first.y} x2={second.x} y2={second.y} stroke="transparent" strokeWidth={0.1} markerStart={markerStart} />
-                          {/* End marker line */}
-                          <line x1={penultimate.x} y1={penultimate.y} x2={last.x} y2={last.y} stroke="transparent" strokeWidth={0.1} markerEnd={markerEnd} />
+                          <polyline points={pointsStr} fill="none" stroke="#607d8b" strokeWidth={2} strokeDasharray={strokeDasharray} markerStart={markerStart} markerEnd={markerEnd} />
                         </g>
                       );
                     })()}
@@ -1375,9 +1984,26 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
             const iconObj = allIcons.find(i => i.label === node.label) || allIcons.find(i => i.type === node.label.toLowerCase().replace(/\s+/g, '-'));
             let iconSvg = null;
             if (iconObj && iconObj.icon) {
-              iconSvg = (
-                <text x={node.x} y={node.y + 8} fontSize="32" textAnchor="middle" dominantBaseline="middle" fill="#fff">{iconObj.icon}</text>
-              );
+              const val = String(iconObj.icon);
+              // data URL (uploaded SVG)
+              if (val.startsWith('data:image/svg+xml')) {
+                iconSvg = (
+                  <image x={node.x - 18} y={node.y - 18} width={36} height={36} href={val} preserveAspectRatio="xMidYMid meet" />
+                );
+              } else if (val.match(/\.svg$/i)) {
+                // vendor svg path (relative) - ensure correct src path
+                const src = val.startsWith('/') ? val : `/icons/${val}`;
+                iconSvg = (
+                  <image x={node.x - 18} y={node.y - 18} width={36} height={36} href={src} preserveAspectRatio="xMidYMid meet" />
+                );
+              } else {
+                // fallback to emoji/text
+                iconSvg = (
+                  <foreignObject x={node.x - 18} y={node.y - 18} width={36} height={36}>
+                    <div style={{ pointerEvents: 'none', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', lineHeight: '36px', fontFamily: '"Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", "Android Emoji", sans-serif' }}>{iconObj.icon}</div>
+                  </foreignObject>
+                );
+              }
             } else if (node.label === 'User') {
               iconSvg = (
                 <svg x={node.x - 18} y={node.y - 18} width="36" height="36" viewBox="0 0 24 24">
@@ -1497,7 +2123,7 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
             const startY = fromNode.y + Math.sin(angle) * startOffset;
             const endX = pt.x - Math.cos(angle) * endOffset;
             const endY = pt.y - Math.sin(angle) * endOffset;
-            const route = computeRoute(startX, startY, endX, endY);
+            const route = computeRouteForNodes(fromNode, { id: 'tmp', label: '', x: pt.x, y: pt.y } as Node);
             if (route.points.length <= 2) {
               return (
                 <line
@@ -1515,16 +2141,16 @@ const allIcons = iconCategories.flatMap(cat => cat.icons);
                 />
               );
             }
-            const pts = route.points.map(p => `${p.x},${p.y}`).join(' ');
-            const first = route.points[0];
-            const second = route.points[1];
-            const last = route.points[route.points.length - 1];
-            const penultimate = route.points[route.points.length - 2];
+            // ensure preview starts/ends at icon-edge offsets
+            const adj = route.points.slice();
+            if (adj.length > 0) {
+              adj[0] = { x: startX, y: startY };
+              adj[adj.length - 1] = { x: endX, y: endY };
+            }
+            const pts = adj.map(p => `${p.x},${p.y}`).join(' ');
             return (
               <g pointerEvents="none" opacity={0.7}>
-                <polyline points={pts} fill="none" stroke="#607d8b" strokeWidth={2} strokeDasharray={strokeDasharray} />
-                <line x1={first.x} y1={first.y} x2={second.x} y2={second.y} stroke="transparent" strokeWidth={0.1} markerStart={markerStart} />
-                <line x1={penultimate.x} y1={penultimate.y} x2={last.x} y2={last.y} stroke="transparent" strokeWidth={0.1} markerEnd={markerEnd} />
+                <polyline points={pts} fill="none" stroke="#607d8b" strokeWidth={2} strokeDasharray={strokeDasharray} markerStart={markerStart} markerEnd={markerEnd} />
               </g>
             );
           })()}

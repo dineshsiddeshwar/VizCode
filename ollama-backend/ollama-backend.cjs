@@ -23,41 +23,25 @@ app.post('/api/ollama/parse', async (req, res) => {
     let clusterOrder = [];
     let clusterNodes = {};
     let clusters = [];
-    let currentCluster = null;
-    let lastIndent = 0;
     for (let line of lines) {
       const indent = line.match(/^([ \t]*)/)[1].length;
       const clusterMatch = line.match(/^[ \t]*Cluster: (.+)$/);
       if (clusterMatch) {
         const clusterLabel = clusterMatch[1].trim();
         const clusterId = clusterLabel.toLowerCase().replace(/\s+/g, '-');
-        // Find parent cluster by indent
-        let parentId = null;
-        for (let i = clusterStack.length - 1; i >= 0; i--) {
-          if (clusterStack[i].indent < indent) {
-            parentId = clusterStack[i].id;
-            break;
-          }
+        // Pop stack until the top has a lower indent
+        while (clusterStack.length && clusterStack[clusterStack.length - 1].indent >= indent) {
+          clusterStack.pop();
         }
+        let parentId = clusterStack.length ? clusterStack[clusterStack.length - 1].id : null;
         clusters.push({ id: clusterId, label: clusterLabel, parentId });
         clusterOrder.push(clusterId);
         clusterNodes[clusterId] = [];
-        currentCluster = clusterId;
         clusterStack.push({ id: clusterId, indent });
-        lastIndent = indent;
-        continue;
-      }
-      // End of cluster (dedent)
-      if (/^\s*$/.test(line)) {
-        while (clusterStack.length && clusterStack[clusterStack.length - 1].indent > indent) {
-          clusterStack.pop();
-        }
-        currentCluster = clusterStack.length ? clusterStack[clusterStack.length - 1].id : null;
-        lastIndent = indent;
         continue;
       }
       const nodeMatch = line.match(/^[ \t]*Node: (.+)$/);
-      if (nodeMatch && currentCluster) {
+      if (nodeMatch && clusterStack.length) {
         const nodeText = nodeMatch[1].trim();
         const nameMatch = nodeText.match(/\[name=([^\]]+)\]/);
         let label = nodeText;
@@ -71,6 +55,8 @@ app.post('/api/ollama/parse', async (req, res) => {
         let type = label.toLowerCase().replace(/\s+/g, '-');
         if (/database|db/i.test(label)) { color = '#e8f5e9'; type = 'database'; }
         else if (/api/i.test(label)) { color = '#c8e6c9'; type = 'api'; }
+        // Always assign node to the current cluster at the top of the stack
+        const currentCluster = clusterStack[clusterStack.length - 1].id;
         clusterNodes[currentCluster].push({
           id: nodeId,
           label: label,

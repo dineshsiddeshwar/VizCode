@@ -1,0 +1,18 @@
+
+
+:root{ --bg:#071026; --card:#071026; --text:#e6eef6; --muted:#9aa4b2; --accent:#ffa726 }
+/* Scoped styles inside the modal only */
+.viz-help{ font-family:Inter,Segoe UI,Roboto,system-ui,Arial; }
+.viz-help .help-doc{ max-width:860px; margin:20px auto; background:var(--card); border-radius:10px; padding:22px; box-shadow:0 8px 24px rgba(2,6,23,0.6); border:1px solid rgba(255,255,255,0.03); }
+.viz-help .help-doc h1{ margin:0 0 12px 0; font-size:20px; color:var(--accent); letter-spacing:0.2px }
+.viz-help .help-doc h2{ font-size:16px; color:var(--text); margin-top:16px }
+.viz-help .help-doc p, .viz-help .help-doc li, .viz-help .help-doc pre{ color:var(--text); font-size:14px; line-height:1.6 }
+.viz-help .help-doc pre{ background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; overflow:auto; color:var(--text) }
+.viz-help .help-doc ol, .viz-help .help-doc ul{ margin:8px 0 8px 18px }
+.viz-help .help-doc footer{ margin-top:18px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.04); color:var(--muted) }
+.viz-help .help-doc a{ color:var(--accent); text-decoration:none }
+
+/* Ensure the modal content is scrollable but hides native thin scroll visuals */
+.viz-help .help-doc{ max-height:80vh; overflow:auto }
+.viz-help .help-doc::-webkit-scrollbar{ width:0; height:0 }
+.viz-help .help-doc{ -ms-overflow-style: none; scrollbar-width: none }

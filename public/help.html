@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>VizCode Help</title>
+  <link rel="stylesheet" href="/help.css">
+</head>
+<body>
+  <article class="help-doc">
+    <h1>VizCode — Help & Usage</h1>
+
+    <section>
+      <h2>1. How to use the tool window</h2>
+      <p>
+        The app presents three main areas: an icon library (left), a code-style prompt editor (middle),
+        and a diagram preview (right). Use the icon library to drag icons onto the canvas, edit the
+        textual prompt to describe clusters/nodes/edges, or import an Excel file to build the diagram.
+      </p>
+    </section>
+
+    <section>
+      <h2>2. What to click — step by step</h2>
+      <ol>
+        <li>To add a new cluster: type a name in <strong>Add Cluster</strong> and click <em>Add</em>.</li>
+        <li>To add icons: drag any icon from the left panel to the canvas on the right.</li>
+        <li>To create an arrow between two nodes: hold <strong>Shift</strong>, click and drag from one node to another.</li>
+        <li>To remove nodes or edges: use <strong>Ctrl+Shift+Click</strong> on the target (this avoids accidental deletes).</li>
+        <li>To rename a node label: double-click the node label (or double-click the node to open the inline editor).</li>
+        <li>Use the <strong>Arrow Type</strong> selector to choose the default arrow style before creating new arrows.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>3. Importing and updating</h2>
+      <p>
+        You can import an Excel file (.xlsx) with two sheets:
+      </p>
+      <ul>
+        <li><strong>Sheet 1 (Nodes)</strong> — columns: Node, Name (optional), Cluster, Parent cluster (optional).</li>
+        <li><strong>Sheet 2 (Edges)</strong> — columns: Source, Destination, Type (arrow style), Label (optional).</li>
+      </ul>
+      <p>After importing the file the prompt is generated automatically and the diagram will update.</p>
+    </section>
+
+    <section>
+      <h2>4. Writing the prompt and syntax</h2>
+      <p>
+        The prompt is indentation-driven. Use <code>Cluster: NAME</code> to declare clusters and indent
+        child clusters or nodes beneath them using two spaces per indent level. Example:
+      </p>
+      <pre>
+Cluster: Auth
+  Node: User
+  Node: System
+  Cluster: Internal
+    Node: DB
+User -> System [arrow=solid, label='auth request']
+      </pre>
+      <p>
+        Rules:
+      </p>
+      <ul>
+        <li><code>Cluster: NAME</code> declares a cluster. Indent child clusters or nodes with two spaces.</li>
+        <li><code>Node: LABEL [name=alias]</code> declares a node; <code>name</code> is an optional identifier used in edges.</li>
+        <li><code>A -> B [arrow=TYPE, label='text']</code> creates an edge. Supported arrow types: <code>solid</code>, <code>dashed</code>, <code>double</code>, <code>double-dotted</code>.</li>
+        <li>Edge label is optional and should be quoted if it contains spaces or special characters.</li>
+      </ul>
+      <p>
+        When editing the prompt, click <strong>Update Diagram</strong> to apply changes. The editor will also auto-parse on new lines.
+      </p>
+    </section>
+
+    <section>
+      <h2>5. Tips & troubleshooting</h2>
+      <ul>
+        <li>If nodes or outlines overlap, try re-running <strong>Update Diagram</strong> — the layout algorithm will re-flow clusters.</li>
+        <li>Hold <strong>Ctrl/Cmd</strong> + <strong>Shift</strong> while clicking nodes or arrows to delete safely.</li>
+        <li>Use the zoom controls in the preview to focus on dense areas before exporting.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>For more support contact: <a href="mailto:dineshks814@gmail.com">dineshks814@gmail.com</a></p>
+    </footer>
+  </article>
+</body>
+</html>

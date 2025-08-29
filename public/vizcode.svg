@@ -1,0 +1,35 @@
+<!-- VizCode Icon-Only SVG Logo — Transparent Background, Dark Theme Optimized -->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">VizCode Hex Network Logo</title>
+  <desc id="desc">A futuristic hexagon emblem with a network-style V shape inside, optimized for dark theme portals with transparent background.</desc>
+
+  <defs>
+    <!-- Neon gradient for dark theme -->
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00eaff"/>
+      <stop offset="100%" stop-color="#9b5cff"/>
+    </linearGradient>
+
+    <!-- Glow for neon effect -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Hexagon outline -->
+  <polygon points="128,24 224,80 224,176 128,232 32,176 32,80" 
+           fill="none" stroke="url(#g)" stroke-width="6" filter="url(#glow)"/>
+
+  <!-- Stylized V made of connected lines inside hexagon -->
+  <path d="M72 80 L128 176 L184 80" fill="none" stroke="url(#g)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+
+  <!-- Node circles -->
+  <circle cx="72" cy="80" r="6" fill="url(#g)" filter="url(#glow)"/>
+  <circle cx="128" cy="176" r="6" fill="url(#g)" filter="url(#glow)"/>
+  <circle cx="184" cy="80" r="6" fill="url(#g)" filter="url(#glow)"/>
+</svg>

@@ -13,7 +13,8 @@
     "@monaco-editor/react": "^4.4.6",
     "cors": "^2.8.5",
     "express": "^5.1.0",
-    "html2canvas": "^1.4.1",
+  "html2canvas": "^1.4.1",
+  "xlsx": "^0.18.5",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "save-svg-as-png": "^1.4.17"
