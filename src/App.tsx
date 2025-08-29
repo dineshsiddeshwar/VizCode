@@ -1610,8 +1610,8 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
           </button>
         </div>
       </header>
-      {/* Main content area */}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+  {/* Main content area */}
+  <div className="main-content" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
       {/* Column 1: Icon & Arrow Library */}
       <aside className="icon-library" style={{ overflowY: 'auto', maxHeight: '90vh', minWidth: 180, background: '#23272f', color: '#fff', borderRight: '2px solid #333' }}>
   <h4 style={{ fontSize: 16, margin: '0 0 10px 0', fontWeight: 600 }}>Icons</h4>
@@ -1637,7 +1637,7 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
             // reset input so same file can be uploaded again
             (e.target as HTMLInputElement).value = '';
           }} />
-    <label htmlFor="upload-svg-input" className="btn-primary small" style={{ cursor: 'pointer' }}>Choose File</label>
+  <label htmlFor="upload-svg-input" className="btn-help-small" style={{ cursor: 'pointer' }}>Choose File</label>
   </div>
   <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
     {uploadedIcons.filter(ic => ic.label.toLowerCase().includes(iconSearch.toLowerCase()) || ic.type.toLowerCase().includes(iconSearch.toLowerCase())).length > 0 && (
@@ -1735,8 +1735,8 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
               }
             }}
           >Add</button>
-          <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <label style={{ fontSize: 13 }}>Import Excel:</label>
+          <div className="import-excel-group">
+            <label>Import Excel:</label>
             <input id="excel-file-input" className="hidden-file-input" type="file" accept=".xlsx,.xls" onChange={(e) => {
               const inputEl = e.currentTarget as HTMLInputElement;
               const f = inputEl.files && inputEl.files[0];
@@ -1835,7 +1835,7 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
         };
               reader.readAsArrayBuffer(f);
             }} />
-            <label htmlFor="excel-file-input" className="btn-primary small" style={{ cursor: 'pointer' }}>Choose File</label>
+            <label htmlFor="excel-file-input" className="btn-help-small" style={{ cursor: 'pointer' }}>Choose File</label>
           </div>
         </div>
         <div className="control-row">
@@ -1885,7 +1885,7 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
               <button onClick={() => fitToContent()} style={{ fontSize: 12, padding: '4px 8px' }}>Fit</button>
             </div>
         </div>
-          <div
+          <div className="svg-wrapper"
             ref={svgWrapperRef}
             onWheel={(e) => {
               // ctrl+wheel to zoom, otherwise scroll

@@ -49,6 +49,40 @@ body, #root {
   align-items: stretch;
 }
 
+/* New responsive layout helpers */
+.main-content { display: flex; flex: 1; min-height: 0; gap: 12px; }
+.svg-wrapper { width: 100%; overflow: auto; }
+
+/* Ensure buttons / controls are touch-friendly and spaced */
+button, .btn-primary, .btn-neutral { min-height: 40px; padding: 10px 12px; }
+
+/* Responsive breakpoints */
+@media (max-width: 1100px) {
+  .icon-library { width: 20%; padding: 0.75rem; }
+  .prompt-editor { width: 30%; padding: 0.75rem; }
+}
+
+@media (max-width: 900px) {
+  /* stack columns vertically on small screens */
+  .main-content { flex-direction: column; }
+  .icon-library { width: 100%; order: 0; display: block; }
+  .prompt-editor { width: 100%; order: 1; }
+  .diagram-canvas { width: 100%; order: 2; }
+  .icon-library, .prompt-editor, .diagram-canvas { padding: 0.75rem; }
+  .control-row { flex-wrap: wrap; }
+  .control-row > * { margin-bottom: 8px; }
+}
+
+@media (max-width: 480px) {
+  /* extra small devices: larger touch targets */
+  .icon-library { padding: 0.5rem; }
+  .prompt-editor { padding: 0.5rem; }
+  .diagram-canvas { padding: 0.5rem; }
+  .btn-primary, .btn-neutral { width: 100%; box-sizing: border-box; }
+  .control-row { padding: 8px; gap: 6px; }
+  .cluster-input { width: 100% !important; }
+}
+
 .canvas-placeholder {
   flex: 1;
   background: #fff;
@@ -108,8 +142,9 @@ body, #root {
   border: 1px solid #e6e9ef;
   border-radius: 8px;
   margin-bottom: 10px;
+  flex-wrap: wrap; /* allow children to wrap to next line instead of overflowing */
 }
-.control-row label { color: #374151; font-weight: 600; }
+.control-row label { color: #374151; font-weight: 600; font-size: 14px; line-height: 1; }
 .control-row input[type="text"], .control-row select {
   padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff; color: #071026;
 }
@@ -120,6 +155,21 @@ body, #root {
 html, body { -ms-overflow-style: none; scrollbar-width: none; }
 
 .cluster-input { font-size: 14px; padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff; color: #071026; }
+
+/* Import Excel aligns with Add Cluster control and wraps below when space is limited */
+.import-excel-group {
+  margin-left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.import-excel-group label { color: inherit; font-weight: inherit; font-size: inherit; line-height: inherit; }
+
+@media (max-width: 900px) {
+  /* ensure import group moves below Add Cluster on small screens */
+  .control-row { flex-wrap: wrap; }
+  .import-excel-group { width: 100%; margin-left: 0; order: 2; }
+}
 
 /* Small variant for primary buttons used in compact controls */
 .btn-primary.small {
@@ -181,3 +231,22 @@ html, body { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* Hide native file input appearance; we'll use a label as a styled button */
 .hidden-file-input { display: none; }
+
+/* Compact Help-style button: same visual as Help but smaller and centered text */
+.btn-help-small {
+  background: linear-gradient(90deg,#ffb86b,#ffa726);
+  color: #071026;
+  border: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  min-width: 88px;
+  box-sizing: border-box;
+}
+.btn-help-small:active { transform: translateY(1px); }
