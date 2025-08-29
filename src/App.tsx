@@ -1840,7 +1840,7 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
             }}
           />
         </div>
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'center' }}>
           <button onClick={() => handleParsePrompt()} disabled={loading} className="btn-primary">Update Diagram</button>
         </div>
         {error && <div style={{ color: 'red', marginTop: 8 }}>{error}</div>}
