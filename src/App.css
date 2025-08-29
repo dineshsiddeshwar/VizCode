@@ -181,4 +181,3 @@ html, body { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* Hide native file input appearance; we'll use a label as a styled button */
 .hidden-file-input { display: none; }
-
