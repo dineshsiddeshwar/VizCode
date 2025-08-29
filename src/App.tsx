@@ -1836,6 +1836,8 @@ const allIcons = (iconCategories.flatMap(cat => cat.icons) as IconDef[]).concat(
               reader.readAsArrayBuffer(f);
             }} />
             <label htmlFor="excel-file-input" className="btn-help-small" style={{ cursor: 'pointer' }}>Choose File</label>
+            {/* Template download button: same visual as Choose File and will download the template in repo root */}
+            <a href="/VizCode-template.xlsx" download className="btn-help-small" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Template</a>
           </div>
         </div>
         <div className="control-row">

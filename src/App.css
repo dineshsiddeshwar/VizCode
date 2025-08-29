@@ -162,8 +162,18 @@ html, body { -ms-overflow-style: none; scrollbar-width: none; }
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap; /* allow buttons to wrap to next line when space is constrained */
 }
 .import-excel-group label { color: inherit; font-weight: inherit; font-size: inherit; line-height: inherit; }
+
+/* Template download anchor styled like the Choose File label and will wrap on small widths */
+.import-excel-group a.btn-help-small {
+  text-decoration: none;
+  min-width: 64px; /* slightly smaller to better fit when zoomed */
+  box-sizing: border-box;
+  flex: 0 0 auto; /* don't stretch; wrap instead */
+}
+.import-excel-group > * { margin-bottom: 6px; }
 
 @media (max-width: 900px) {
   /* ensure import group moves below Add Cluster on small screens */
